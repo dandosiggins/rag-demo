@@ -1,8 +1,31 @@
 import { randomUUID } from "crypto";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { pipeline, env } from "@xenova/transformers";
 
-// Embeddings use OpenAI text-embedding-3-small (1536-dim) via the Replit AI
-// Integrations proxy, so no local model weights or ONNX runtime are required.
+// Allow both cached local models and remote downloads from HuggingFace Hub.
+// On first run the model weights (~23 MB) are fetched and cached locally;
+// subsequent runs load entirely from disk.
+env.allowLocalModels = true;
+env.allowRemoteModels = true;
+
+// Singleton pipeline — cached as a Promise so concurrent callers share one load.
+// Using a Promise (not the resolved value) ensures that if multiple embed()
+// calls happen before the first load completes they all await the same work.
+let _embedderPromise: ReturnType<typeof pipeline> | null = null;
+
+function getEmbedder() {
+  if (!_embedderPromise) {
+    _embedderPromise = pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
+  }
+  return _embedderPromise;
+}
+
+// Produce a mean-pooled, L2-normalised embedding (384-dim).
+async function embed(text: string): Promise<number[]> {
+  const embedder = await getEmbedder();
+  const output = await embedder(text, { pooling: "mean", normalize: true });
+  // output.data is a Float32Array
+  return Array.from(output.data as Float32Array);
+}
 
 export interface StoredChunk {
   id: string;
@@ -23,14 +46,6 @@ export interface StoredDocument {
 
 const documents = new Map<string, StoredDocument>();
 const chunks: StoredChunk[] = [];
-
-async function embed(text: string): Promise<number[]> {
-  const response = await openai.embeddings.create({
-    model: "text-embedding-3-small",
-    input: text,
-  });
-  return response.data[0].embedding;
-}
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;

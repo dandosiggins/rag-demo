@@ -23,13 +23,14 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 Interactive proof-of-concept web app demonstrating Retrieval-Augmented Generation (RAG).
 - **Frontend**: React + Vite, dark-themed developer aesthetic
 - **Backend**: Express API server with in-memory vector store
-- **RAG Pipeline**: TF-IDF retrieval + OpenAI GPT-5.4 for generation
+- **RAG Pipeline**: Semantic embedding retrieval (all-MiniLM-L6-v2, 384-dim, local via @xenova/transformers) + OpenAI GPT-5.4 for generation
 - **Key components**: document ingestion, chunk visualizer, query engine, similarity score display, pipeline step timing
 
 ### API Server (`artifacts/api-server/`)
 Shared Express backend.
 - **RAG routes**: `POST /api/rag/documents`, `GET /api/rag/documents`, `DELETE /api/rag/documents/:id`, `GET /api/rag/documents/:id/chunks`, `POST /api/rag/query`, `GET /api/rag/stats`
-- **RAG store**: `artifacts/api-server/src/lib/rag-store.ts` — in-memory TF-IDF vector store
+- **RAG store**: `artifacts/api-server/src/lib/rag-store.ts` — in-memory semantic vector store using local all-MiniLM-L6-v2 embeddings (384-dim, via @xenova/transformers) and cosine similarity
+- **First-run note**: on the first ingest call, model weights (~23 MB) are downloaded from HuggingFace Hub and cached. Expect ~20-60s warmup latency on cold start; subsequent requests load from disk and are fast.
 
 ## Key Commands
 

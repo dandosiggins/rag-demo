@@ -102,7 +102,7 @@ ragRouter.get("/rag/documents/:documentId/chunks", (req, res) => {
 });
 
 // Retrieval-only: embed the query and return the top-K matching chunks.
-// Uses OpenAI text-embedding-3-small via the Replit AI Integrations proxy.
+// Uses all-MiniLM-L6-v2 (384-dim) via @xenova/transformers (local, no API key).
 // Does NOT call the LLM — generation is handled exclusively by /rag/generate.
 ragRouter.post("/rag/query", async (req, res) => {
   const { question, topK } = req.body as { question: unknown; topK?: unknown };
@@ -141,7 +141,7 @@ ragRouter.post("/rag/query", async (req, res) => {
     processingSteps: [
       {
         step: "Embed Query",
-        description: `Encoded query into a 1536-dim semantic embedding using text-embedding-3-small`,
+        description: `Encoded query into a 384-dim semantic embedding using all-MiniLM-L6-v2 (local model)`,
         durationMs: embedMs,
       },
       {

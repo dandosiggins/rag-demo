@@ -104,7 +104,7 @@ paths:
       operationId: ragQuery
       tags: [rag]
       summary: Retrieval only — embed query and return top-K matching chunks
-      description: Embeds the question using text-embedding-3-small (OpenAI, 1536-dim) and returns the top-K most similar chunks by cosine similarity. Does NOT call the LLM; pass the result to /rag/generate for streaming answer generation.
+      description: Embeds the question using all-MiniLM-L6-v2 (local, 384-dim) and returns the top-K most similar chunks by cosine similarity. Does NOT call the LLM; pass the result to /rag/generate for streaming answer generation.
       requestBody:
         required: true
         content:
