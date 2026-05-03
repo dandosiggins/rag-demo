@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: rag
+    description: RAG (Retrieval-Augmented Generation) operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,111 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /rag/documents:
+    get:
+      operationId: listDocuments
+      tags: [rag]
+      summary: List all ingested documents
+      responses:
+        "200":
+          description: List of documents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Document"
+    post:
+      operationId: ingestDocument
+      tags: [rag]
+      summary: Ingest a document (chunk and vectorize)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestDocumentBody"
+      responses:
+        "200":
+          description: Ingested document with chunks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestDocumentResult"
+
+  /rag/documents/{documentId}:
+    delete:
+      operationId: deleteDocument
+      tags: [rag]
+      summary: Delete a document and its chunks
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Document deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteDocumentResult"
+
+  /rag/documents/{documentId}/chunks:
+    get:
+      operationId: getDocumentChunks
+      tags: [rag]
+      summary: Get all chunks for a document
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of chunks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Chunk"
+
+  /rag/query:
+    post:
+      operationId: ragQuery
+      tags: [rag]
+      summary: Query the RAG pipeline (retrieve + generate)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagQueryBody"
+      responses:
+        "200":
+          description: Retrieved chunks and generated answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagQueryResult"
+
+  /rag/stats:
+    get:
+      operationId: getRagStats
+      tags: [rag]
+      summary: Get overall stats about the knowledge base
+      responses:
+        "200":
+          description: Knowledge base stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagStats"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +141,164 @@ components:
       required:
         - status
 
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        chunkCount:
+          type: integer
+        createdAt:
+          type: string
+      required:
+        - id
+        - title
+        - chunkCount
+        - createdAt
+
+    Chunk:
+      type: object
+      properties:
+        id:
+          type: string
+        documentId:
+          type: string
+        index:
+          type: integer
+        text:
+          type: string
+        wordCount:
+          type: integer
+      required:
+        - id
+        - documentId
+        - index
+        - text
+        - wordCount
+
+    RetrievedChunk:
+      type: object
+      properties:
+        id:
+          type: string
+        documentId:
+          type: string
+        documentTitle:
+          type: string
+        index:
+          type: integer
+        text:
+          type: string
+        score:
+          type: number
+          description: Similarity score (0-1)
+        wordCount:
+          type: integer
+      required:
+        - id
+        - documentId
+        - documentTitle
+        - index
+        - text
+        - score
+        - wordCount
+
+    IngestDocumentBody:
+      type: object
+      properties:
+        title:
+          type: string
+        text:
+          type: string
+        chunkSize:
+          type: integer
+          description: Target words per chunk (default 100)
+      required:
+        - title
+        - text
+
+    IngestDocumentResult:
+      type: object
+      properties:
+        document:
+          $ref: "#/components/schemas/Document"
+        chunks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Chunk"
+      required:
+        - document
+        - chunks
+
+    DeleteDocumentResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        documentId:
+          type: string
+      required:
+        - success
+        - documentId
+
+    RagQueryBody:
+      type: object
+      properties:
+        question:
+          type: string
+        topK:
+          type: integer
+          description: Number of chunks to retrieve (default 3)
+      required:
+        - question
+
+    RagQueryResult:
+      type: object
+      properties:
+        question:
+          type: string
+        retrievedChunks:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetrievedChunk"
+        answer:
+          type: string
+        processingSteps:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProcessingStep"
+      required:
+        - question
+        - retrievedChunks
+        - answer
+        - processingSteps
+
+    ProcessingStep:
+      type: object
+      properties:
+        step:
+          type: string
+        description:
+          type: string
+        durationMs:
+          type: integer
+      required:
+        - step
+        - description
+        - durationMs
+
+    RagStats:
+      type: object
+      properties:
+        documentCount:
+          type: integer
+        chunkCount:
+          type: integer
+        totalWords:
+          type: integer
+      required:
+        - documentCount
+        - chunkCount
+        - totalWords

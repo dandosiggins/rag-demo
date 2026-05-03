@@ -5,18 +5,31 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type {
+  Chunk,
+  DeleteDocumentResult,
+  Document,
+  HealthStatus,
+  IngestDocumentBody,
+  IngestDocumentResult,
+  RagQueryBody,
+  RagQueryResult,
+  RagStats,
+} from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -92,6 +105,499 @@ export function useHealthCheck<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getHealthCheckQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List all ingested documents
+ */
+export const getListDocumentsUrl = () => {
+  return `/api/rag/documents`;
+};
+
+export const listDocuments = async (
+  options?: RequestInit,
+): Promise<Document[]> => {
+  return customFetch<Document[]>(getListDocumentsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListDocumentsQueryKey = () => {
+  return [`/api/rag/documents`] as const;
+};
+
+export const getListDocumentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDocuments>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listDocuments>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListDocumentsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listDocuments>>> = ({
+    signal,
+  }) => listDocuments({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDocuments>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListDocumentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDocuments>>
+>;
+export type ListDocumentsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all ingested documents
+ */
+
+export function useListDocuments<
+  TData = Awaited<ReturnType<typeof listDocuments>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listDocuments>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListDocumentsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Ingest a document (chunk and vectorize)
+ */
+export const getIngestDocumentUrl = () => {
+  return `/api/rag/documents`;
+};
+
+export const ingestDocument = async (
+  ingestDocumentBody: IngestDocumentBody,
+  options?: RequestInit,
+): Promise<IngestDocumentResult> => {
+  return customFetch<IngestDocumentResult>(getIngestDocumentUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(ingestDocumentBody),
+  });
+};
+
+export const getIngestDocumentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ingestDocument>>,
+    TError,
+    { data: BodyType<IngestDocumentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ingestDocument>>,
+  TError,
+  { data: BodyType<IngestDocumentBody> },
+  TContext
+> => {
+  const mutationKey = ["ingestDocument"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ingestDocument>>,
+    { data: BodyType<IngestDocumentBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return ingestDocument(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type IngestDocumentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ingestDocument>>
+>;
+export type IngestDocumentMutationBody = BodyType<IngestDocumentBody>;
+export type IngestDocumentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Ingest a document (chunk and vectorize)
+ */
+export const useIngestDocument = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ingestDocument>>,
+    TError,
+    { data: BodyType<IngestDocumentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof ingestDocument>>,
+  TError,
+  { data: BodyType<IngestDocumentBody> },
+  TContext
+> => {
+  return useMutation(getIngestDocumentMutationOptions(options));
+};
+
+/**
+ * @summary Delete a document and its chunks
+ */
+export const getDeleteDocumentUrl = (documentId: string) => {
+  return `/api/rag/documents/${documentId}`;
+};
+
+export const deleteDocument = async (
+  documentId: string,
+  options?: RequestInit,
+): Promise<DeleteDocumentResult> => {
+  return customFetch<DeleteDocumentResult>(getDeleteDocumentUrl(documentId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteDocumentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteDocument>>,
+    TError,
+    { documentId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteDocument>>,
+  TError,
+  { documentId: string },
+  TContext
+> => {
+  const mutationKey = ["deleteDocument"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteDocument>>,
+    { documentId: string }
+  > = (props) => {
+    const { documentId } = props ?? {};
+
+    return deleteDocument(documentId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteDocumentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteDocument>>
+>;
+
+export type DeleteDocumentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a document and its chunks
+ */
+export const useDeleteDocument = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteDocument>>,
+    TError,
+    { documentId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteDocument>>,
+  TError,
+  { documentId: string },
+  TContext
+> => {
+  return useMutation(getDeleteDocumentMutationOptions(options));
+};
+
+/**
+ * @summary Get all chunks for a document
+ */
+export const getGetDocumentChunksUrl = (documentId: string) => {
+  return `/api/rag/documents/${documentId}/chunks`;
+};
+
+export const getDocumentChunks = async (
+  documentId: string,
+  options?: RequestInit,
+): Promise<Chunk[]> => {
+  return customFetch<Chunk[]>(getGetDocumentChunksUrl(documentId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDocumentChunksQueryKey = (documentId: string) => {
+  return [`/api/rag/documents/${documentId}/chunks`] as const;
+};
+
+export const getGetDocumentChunksQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDocumentChunks>>,
+  TError = ErrorType<unknown>,
+>(
+  documentId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDocumentChunks>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDocumentChunksQueryKey(documentId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDocumentChunks>>
+  > = ({ signal }) =>
+    getDocumentChunks(documentId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!documentId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDocumentChunks>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDocumentChunksQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDocumentChunks>>
+>;
+export type GetDocumentChunksQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get all chunks for a document
+ */
+
+export function useGetDocumentChunks<
+  TData = Awaited<ReturnType<typeof getDocumentChunks>>,
+  TError = ErrorType<unknown>,
+>(
+  documentId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDocumentChunks>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDocumentChunksQueryOptions(documentId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Query the RAG pipeline (retrieve + generate)
+ */
+export const getRagQueryUrl = () => {
+  return `/api/rag/query`;
+};
+
+export const ragQuery = async (
+  ragQueryBody: RagQueryBody,
+  options?: RequestInit,
+): Promise<RagQueryResult> => {
+  return customFetch<RagQueryResult>(getRagQueryUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(ragQueryBody),
+  });
+};
+
+export const getRagQueryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ragQuery>>,
+    TError,
+    { data: BodyType<RagQueryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ragQuery>>,
+  TError,
+  { data: BodyType<RagQueryBody> },
+  TContext
+> => {
+  const mutationKey = ["ragQuery"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ragQuery>>,
+    { data: BodyType<RagQueryBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return ragQuery(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RagQueryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ragQuery>>
+>;
+export type RagQueryMutationBody = BodyType<RagQueryBody>;
+export type RagQueryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Query the RAG pipeline (retrieve + generate)
+ */
+export const useRagQuery = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ragQuery>>,
+    TError,
+    { data: BodyType<RagQueryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof ragQuery>>,
+  TError,
+  { data: BodyType<RagQueryBody> },
+  TContext
+> => {
+  return useMutation(getRagQueryMutationOptions(options));
+};
+
+/**
+ * @summary Get overall stats about the knowledge base
+ */
+export const getGetRagStatsUrl = () => {
+  return `/api/rag/stats`;
+};
+
+export const getRagStats = async (options?: RequestInit): Promise<RagStats> => {
+  return customFetch<RagStats>(getGetRagStatsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetRagStatsQueryKey = () => {
+  return [`/api/rag/stats`] as const;
+};
+
+export const getGetRagStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRagStats>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getRagStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRagStatsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRagStats>>> = ({
+    signal,
+  }) => getRagStats({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRagStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRagStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRagStats>>
+>;
+export type GetRagStatsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get overall stats about the knowledge base
+ */
+
+export function useGetRagStats<
+  TData = Awaited<ReturnType<typeof getRagStats>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getRagStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRagStatsQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

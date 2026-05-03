@@ -8,3 +8,71 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface Document {
+  id: string;
+  title: string;
+  chunkCount: number;
+  createdAt: string;
+}
+
+export interface Chunk {
+  id: string;
+  documentId: string;
+  index: number;
+  text: string;
+  wordCount: number;
+}
+
+export interface RetrievedChunk {
+  id: string;
+  documentId: string;
+  documentTitle: string;
+  index: number;
+  text: string;
+  /** Similarity score (0-1) */
+  score: number;
+  wordCount: number;
+}
+
+export interface IngestDocumentBody {
+  title: string;
+  text: string;
+  /** Target words per chunk (default 100) */
+  chunkSize?: number;
+}
+
+export interface IngestDocumentResult {
+  document: Document;
+  chunks: Chunk[];
+}
+
+export interface DeleteDocumentResult {
+  success: boolean;
+  documentId: string;
+}
+
+export interface RagQueryBody {
+  question: string;
+  /** Number of chunks to retrieve (default 3) */
+  topK?: number;
+}
+
+export interface ProcessingStep {
+  step: string;
+  description: string;
+  durationMs: number;
+}
+
+export interface RagQueryResult {
+  question: string;
+  retrievedChunks: RetrievedChunk[];
+  answer: string;
+  processingSteps: ProcessingStep[];
+}
+
+export interface RagStats {
+  documentCount: number;
+  chunkCount: number;
+  totalWords: number;
+}

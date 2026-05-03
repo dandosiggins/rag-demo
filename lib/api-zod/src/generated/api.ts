@@ -14,3 +14,117 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * @summary List all ingested documents
+ */
+export const ListDocumentsResponseItem = zod.object({
+  id: zod.string(),
+  title: zod.string(),
+  chunkCount: zod.number(),
+  createdAt: zod.string(),
+});
+export const ListDocumentsResponse = zod.array(ListDocumentsResponseItem);
+
+/**
+ * @summary Ingest a document (chunk and vectorize)
+ */
+export const IngestDocumentBody = zod.object({
+  title: zod.string(),
+  text: zod.string(),
+  chunkSize: zod
+    .number()
+    .optional()
+    .describe("Target words per chunk (default 100)"),
+});
+
+export const IngestDocumentResponse = zod.object({
+  document: zod.object({
+    id: zod.string(),
+    title: zod.string(),
+    chunkCount: zod.number(),
+    createdAt: zod.string(),
+  }),
+  chunks: zod.array(
+    zod.object({
+      id: zod.string(),
+      documentId: zod.string(),
+      index: zod.number(),
+      text: zod.string(),
+      wordCount: zod.number(),
+    }),
+  ),
+});
+
+/**
+ * @summary Delete a document and its chunks
+ */
+export const DeleteDocumentParams = zod.object({
+  documentId: zod.coerce.string(),
+});
+
+export const DeleteDocumentResponse = zod.object({
+  success: zod.boolean(),
+  documentId: zod.string(),
+});
+
+/**
+ * @summary Get all chunks for a document
+ */
+export const GetDocumentChunksParams = zod.object({
+  documentId: zod.coerce.string(),
+});
+
+export const GetDocumentChunksResponseItem = zod.object({
+  id: zod.string(),
+  documentId: zod.string(),
+  index: zod.number(),
+  text: zod.string(),
+  wordCount: zod.number(),
+});
+export const GetDocumentChunksResponse = zod.array(
+  GetDocumentChunksResponseItem,
+);
+
+/**
+ * @summary Query the RAG pipeline (retrieve + generate)
+ */
+export const RagQueryBody = zod.object({
+  question: zod.string(),
+  topK: zod
+    .number()
+    .optional()
+    .describe("Number of chunks to retrieve (default 3)"),
+});
+
+export const RagQueryResponse = zod.object({
+  question: zod.string(),
+  retrievedChunks: zod.array(
+    zod.object({
+      id: zod.string(),
+      documentId: zod.string(),
+      documentTitle: zod.string(),
+      index: zod.number(),
+      text: zod.string(),
+      score: zod.number().describe("Similarity score (0-1)"),
+      wordCount: zod.number(),
+    }),
+  ),
+  answer: zod.string(),
+  processingSteps: zod.array(
+    zod.object({
+      step: zod.string(),
+      description: zod.string(),
+      durationMs: zod.number(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get overall stats about the knowledge base
+ */
+export const GetRagStatsResponse = zod.object({
+  documentCount: zod.number(),
+  chunkCount: zod.number(),
+  totalWords: zod.number(),
+});
