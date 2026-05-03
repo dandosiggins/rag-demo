@@ -71,6 +71,7 @@ ragRouter.get("/rag/documents/:documentId/chunks", (req, res) => {
   res.json(chunks);
 });
 
+// Combined retrieve + generate (non-streaming)
 ragRouter.post("/rag/query", async (req, res) => {
   const { question, topK } = req.body as {
     question: string;
@@ -112,27 +113,25 @@ ragRouter.post("/rag/query", async (req, res) => {
   }
 
   const context = retrieved
-    .map(
-      (c, i) =>
-        `[Chunk ${i + 1} from "${c.documentTitle}"]\n${c.text}`
-    )
+    .map((c, i) => `[Chunk ${i + 1} from "${c.documentTitle}"]\n${c.text}`)
     .join("\n\n");
-
-  const systemPrompt = `You are a helpful assistant that answers questions based strictly on the provided context chunks. 
-Be concise and accurate. If the context doesn't fully answer the question, say so clearly.
-Do not use emojis.`;
-
-  const userMessage = `Context:\n${context}\n\nQuestion: ${question}`;
 
   const t1 = Date.now();
   let answer = "";
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_tokens: 1024,
+      model: "gpt-5.4",
+      max_completion_tokens: 8192,
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
+        {
+          role: "system",
+          content:
+            "You are a helpful assistant that answers questions based strictly on the provided context chunks. Be concise and accurate. If the context doesn't fully answer the question, say so clearly. Do not use emojis.",
+        },
+        {
+          role: "user",
+          content: `Context:\n${context}\n\nQuestion: ${question}`,
+        },
       ],
     });
     answer = completion.choices[0]?.message?.content ?? "No answer generated.";
@@ -166,18 +165,29 @@ Do not use emojis.`;
   });
 });
 
-// Streaming generate endpoint: retrieve chunks then stream the LLM answer via SSE
+// Streaming generate endpoint: accepts pre-retrieved chunks + question, streams LLM answer via SSE
 ragRouter.post("/rag/generate", async (req, res) => {
-  const { question, topK } = req.body as { question: string; topK?: number };
+  const { question, retrievedChunks } = req.body as {
+    question: string;
+    retrievedChunks: Array<{
+      id: string;
+      documentId: string;
+      documentTitle: string;
+      index: number;
+      text: string;
+      score: number;
+      wordCount: number;
+    }>;
+  };
 
   if (!question) {
     res.status(400).json({ error: "question is required" });
     return;
   }
-
-  const t0 = Date.now();
-  const retrieved = await retrieveTopK(question, topK ?? 3);
-  const embedMs = Date.now() - t0;
+  if (!Array.isArray(retrievedChunks)) {
+    res.status(400).json({ error: "retrievedChunks array is required" });
+    return;
+  }
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -188,53 +198,24 @@ ragRouter.post("/rag/generate", async (req, res) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
-  sendEvent("steps", {
-    steps: [
-      {
-        step: "Embed Query",
-        description: `Encoded query into a 384-dim semantic embedding using all-MiniLM-L6-v2`,
-        durationMs: embedMs,
-      },
-      {
-        step: "Retrieve",
-        description: `Found top ${retrieved.length} relevant chunks via cosine similarity`,
-        durationMs: 0,
-      },
-    ],
-  });
-
-  sendEvent("chunks", {
-    retrievedChunks: retrieved.map(
-      ({ id, documentId, documentTitle, index, text, score, wordCount }) => ({
-        id,
-        documentId,
-        documentTitle,
-        index,
-        text,
-        score,
-        wordCount,
-      })
-    ),
-  });
-
-  if (retrieved.length === 0) {
+  if (retrievedChunks.length === 0) {
     sendEvent("answer", {
-      token: "No documents have been ingested yet. Please add some first.",
+      token: "No relevant chunks were provided. Please retrieve documents first.",
     });
     sendEvent("done", { generateMs: 0 });
     res.end();
     return;
   }
 
-  const context = retrieved
+  const context = retrievedChunks
     .map((c, i) => `[Chunk ${i + 1} from "${c.documentTitle}"]\n${c.text}`)
     .join("\n\n");
 
   const t1 = Date.now();
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_tokens: 1024,
+      model: "gpt-5.4",
+      max_completion_tokens: 8192,
       stream: true,
       messages: [
         {

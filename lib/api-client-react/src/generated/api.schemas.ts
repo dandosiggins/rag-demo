@@ -58,6 +58,14 @@ export interface RagQueryBody {
   topK?: number;
 }
 
+/**
+ * Input for the streaming generate endpoint — pass the question plus the chunks already retrieved by /rag/query.
+ */
+export interface RagGenerateBody {
+  question: string;
+  retrievedChunks: RetrievedChunk[];
+}
+
 export interface ProcessingStep {
   step: string;
   description: string;

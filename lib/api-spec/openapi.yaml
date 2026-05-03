@@ -122,16 +122,17 @@ paths:
     post:
       operationId: ragGenerate
       tags: [rag]
-      summary: Stream RAG pipeline (retrieve + generate via SSE)
+      summary: Stream LLM generation from pre-retrieved chunks via SSE
+      description: Accepts a question and an array of already-retrieved chunks (from /rag/query or /rag/retrieve), then streams the grounded LLM answer token-by-token as Server-Sent Events.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RagQueryBody"
+              $ref: "#/components/schemas/RagGenerateBody"
       responses:
         "200":
-          description: Server-Sent Events stream of pipeline stages and answer tokens
+          description: Server-Sent Events stream of answer tokens
           content:
             text/event-stream:
               schema:
@@ -272,6 +273,20 @@ components:
           description: Number of chunks to retrieve (default 3)
       required:
         - question
+
+    RagGenerateBody:
+      type: object
+      description: Input for the streaming generate endpoint — pass the question plus the chunks already retrieved by /rag/query.
+      properties:
+        question:
+          type: string
+        retrievedChunks:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetrievedChunk"
+      required:
+        - question
+        - retrievedChunks
 
     RagQueryResult:
       type: object

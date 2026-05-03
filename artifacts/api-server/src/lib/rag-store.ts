@@ -53,13 +53,96 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(magA) * Math.sqrt(magB));
 }
 
-export function chunkText(text: string, chunkSize = 100): string[] {
-  const words = text.split(/\s+/).filter((w) => w.length > 0);
+/**
+ * Paragraph- and sentence-aware chunking.
+ *
+ * Strategy:
+ * 1. Split text on blank lines (paragraph boundaries).
+ * 2. Accumulate paragraphs into a chunk until the word limit is reached.
+ * 3. If a single paragraph exceeds the limit, break it further on sentence
+ *    boundaries (`.`, `!`, `?`) before falling back to a raw word window.
+ */
+export function chunkText(text: string, maxWords = 100): string[] {
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((p) => p.replace(/\n/g, " ").trim())
+    .filter((p) => p.length > 0);
+
   const result: string[] = [];
-  for (let i = 0; i < words.length; i += chunkSize) {
-    result.push(words.slice(i, i + chunkSize).join(" "));
+  let currentParts: string[] = [];
+  let currentWords = 0;
+
+  const flush = () => {
+    if (currentParts.length > 0) {
+      result.push(currentParts.join(" ").trim());
+      currentParts = [];
+      currentWords = 0;
+    }
+  };
+
+  const splitBySentences = (para: string): string[] => {
+    // Split on sentence-ending punctuation followed by whitespace / end
+    const raw = para.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) ?? [para];
+    const sentences: string[] = [];
+    let buf = "";
+    let bufWords = 0;
+    for (const s of raw) {
+      const sw = s.trim().split(/\s+/).length;
+      if (bufWords + sw <= maxWords) {
+        buf += (buf ? " " : "") + s.trim();
+        bufWords += sw;
+      } else {
+        if (buf) sentences.push(buf);
+        // If a single sentence exceeds the limit, hard-split by words
+        if (sw > maxWords) {
+          const words = s.trim().split(/\s+/);
+          for (let i = 0; i < words.length; i += maxWords) {
+            sentences.push(words.slice(i, i + maxWords).join(" "));
+          }
+          buf = "";
+          bufWords = 0;
+        } else {
+          buf = s.trim();
+          bufWords = sw;
+        }
+      }
+    }
+    if (buf) sentences.push(buf);
+    return sentences;
+  };
+
+  for (const para of paragraphs) {
+    const wc = para.split(/\s+/).length;
+
+    if (wc > maxWords) {
+      // Paragraph too large — flush current buffer, then split into sentences
+      flush();
+      const parts = splitBySentences(para);
+      for (const part of parts) {
+        const pw = part.split(/\s+/).length;
+        if (currentWords + pw <= maxWords) {
+          currentParts.push(part);
+          currentWords += pw;
+        } else {
+          flush();
+          currentParts.push(part);
+          currentWords = pw;
+        }
+      }
+    } else if (currentWords + wc <= maxWords) {
+      // Fits — accumulate
+      currentParts.push(para);
+      currentWords += wc;
+    } else {
+      // Would overflow — flush and start fresh
+      flush();
+      currentParts.push(para);
+      currentWords = wc;
+    }
   }
-  return result;
+
+  flush();
+  return result.length > 0 ? result : [text.trim()];
 }
 
 export async function ingestDocument(
@@ -71,15 +154,15 @@ export async function ingestDocument(
   const rawChunks = chunkText(text, chunkSize);
 
   const newChunks: StoredChunk[] = await Promise.all(
-    rawChunks.map(async (chunkText, idx) => {
-      const embedding = await embed(chunkText);
+    rawChunks.map(async (chunkTxt, idx) => {
+      const embedding = await embed(chunkTxt);
       return {
         id: randomUUID(),
         documentId: docId,
         documentTitle: title,
         index: idx,
-        text: chunkText,
-        wordCount: chunkText.split(/\s+/).length,
+        text: chunkTxt,
+        wordCount: chunkTxt.split(/\s+/).filter((w) => w.length > 0).length,
         embedding,
       };
     })
@@ -109,12 +192,12 @@ export function getDocument(id: string): StoredDocument | undefined {
 export function deleteDocument(id: string): boolean {
   if (!documents.has(id)) return false;
   documents.delete(id);
-  const idx = chunks.reduce<number[]>((acc, c, i) => {
+  const idxs = chunks.reduce<number[]>((acc, c, i) => {
     if (c.documentId === id) acc.push(i);
     return acc;
   }, []);
-  for (let i = idx.length - 1; i >= 0; i--) {
-    chunks.splice(idx[i], 1);
+  for (let i = idxs.length - 1; i >= 0; i--) {
+    chunks.splice(idxs[i], 1);
   }
   return true;
 }

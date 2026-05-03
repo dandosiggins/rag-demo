@@ -1,107 +1,127 @@
 import React, { useState, useRef } from "react";
-import type { RagQueryResult } from "@workspace/api-client-react";
+import { useRagQuery } from "@workspace/api-client-react";
+import type { RagQueryResult, RetrievedChunk } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Loader2, Search, Zap, Cpu, Clock, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
-type StreamedState = {
-  steps: RagQueryResult["processingSteps"];
-  retrievedChunks: RagQueryResult["retrievedChunks"];
-  answer: string;
-  done: boolean;
-  generateMs: number;
-};
+type Phase = "idle" | "retrieving" | "generating" | "done";
 
-const INITIAL_STATE: StreamedState = {
-  steps: [],
-  retrievedChunks: [],
-  answer: "",
-  done: false,
-  generateMs: 0,
+type ResultState = {
+  steps: RagQueryResult["processingSteps"];
+  retrievedChunks: RetrievedChunk[];
+  answer: string;
+  generateMs: number;
 };
 
 export function QueryInterface() {
   const [question, setQuestion] = useState("");
-  const [isRunning, setIsRunning] = useState(false);
-  const [streamed, setStreamed] = useState<StreamedState | null>(null);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [result, setResult] = useState<ResultState | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  const retrieveMutation = useRagQuery();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!question.trim() || isRunning) return;
+    if (!question.trim() || phase !== "idle") return;
 
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    setIsRunning(true);
-    setStreamed({ ...INITIAL_STATE });
+    setPhase("retrieving");
+    setResult(null);
 
-    try {
-      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-      const res = await fetch(`${base}/api/rag/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, topK: 3 }),
-        signal: ctrl.signal,
-      });
+    // Step 1: retrieve chunks (non-streaming, uses generated hook)
+    retrieveMutation.mutate(
+      { data: { question, topK: 3 } },
+      {
+        onSuccess: async (data) => {
+          const { retrievedChunks, processingSteps } = data;
 
-      if (!res.ok || !res.body) throw new Error("Stream failed");
+          setResult({
+            steps: processingSteps,
+            retrievedChunks,
+            answer: "",
+            generateMs: 0,
+          });
+          setPhase("generating");
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
+          // Step 2: stream answer using pre-retrieved chunks
+          try {
+            const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+            const res = await fetch(`${base}/api/rag/generate`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ question, retrievedChunks }),
+              signal: ctrl.signal,
+            });
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
+            if (!res.ok || !res.body) throw new Error("Stream failed");
 
-        const events = buf.split("\n\n");
-        buf = events.pop() ?? "";
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
 
-        for (const block of events) {
-          const lines = block.trim().split("\n");
-          const eventLine = lines.find((l) => l.startsWith("event:"));
-          const dataLine = lines.find((l) => l.startsWith("data:"));
-          if (!eventLine || !dataLine) continue;
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
 
-          const event = eventLine.slice(7).trim();
-          const data = JSON.parse(dataLine.slice(5).trim());
+              const events = buf.split("\n\n");
+              buf = events.pop() ?? "";
 
-          if (event === "steps") {
-            setStreamed((s) => s ? { ...s, steps: data.steps } : s);
-          } else if (event === "chunks") {
-            setStreamed((s) => s ? { ...s, retrievedChunks: data.retrievedChunks } : s);
-          } else if (event === "answer") {
-            setStreamed((s) => s ? { ...s, answer: s.answer + data.token } : s);
-          } else if (event === "done") {
-            setStreamed((s) =>
-              s
-                ? {
-                    ...s,
-                    done: true,
-                    generateMs: data.generateMs,
-                    steps: [
-                      ...s.steps,
-                      { step: "Generate", description: "Streamed answer from language model", durationMs: data.generateMs },
-                    ],
-                  }
-                : s
-            );
+              for (const block of events) {
+                const lines = block.trim().split("\n");
+                const eventLine = lines.find((l) => l.startsWith("event:"));
+                const dataLine = lines.find((l) => l.startsWith("data:"));
+                if (!eventLine || !dataLine) continue;
+
+                const event = eventLine.slice(7).trim();
+                const parsed = JSON.parse(dataLine.slice(5).trim());
+
+                if (event === "answer") {
+                  setResult((s) => s ? { ...s, answer: s.answer + parsed.token } : s);
+                } else if (event === "done") {
+                  const genMs: number = parsed.generateMs;
+                  setResult((s) =>
+                    s
+                      ? {
+                          ...s,
+                          generateMs: genMs,
+                          steps: [
+                            ...s.steps,
+                            {
+                              step: "Generate",
+                              description: "Streamed grounded answer from language model using retrieved context",
+                              durationMs: genMs,
+                            },
+                          ],
+                        }
+                      : s
+                  );
+                }
+              }
+            }
+          } catch (err: unknown) {
+            if ((err as Error).name !== "AbortError") {
+              console.error("Stream error:", err);
+            }
+          } finally {
+            setPhase("done");
           }
-        }
+        },
+        onError: () => {
+          setPhase("idle");
+        },
       }
-    } catch (err: unknown) {
-      if ((err as Error).name !== "AbortError") {
-        console.error("Stream error:", err);
-      }
-    } finally {
-      setIsRunning(false);
-    }
+    );
   };
+
+  const isRunning = phase === "retrieving" || phase === "generating";
 
   return (
     <div className="space-y-6">
@@ -126,6 +146,7 @@ export function QueryInterface() {
               type="submit"
               className="h-11 px-6 font-mono bg-primary text-primary-foreground hover:bg-primary/90"
               disabled={isRunning || !question.trim()}
+              onClick={() => { if (phase === "done") setPhase("idle"); }}
             >
               {isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
               {isRunning ? "" : "Run RAG"}
@@ -134,27 +155,27 @@ export function QueryInterface() {
         </CardContent>
       </Card>
 
-      {isRunning && (!streamed || streamed.steps.length === 0) && (
+      {phase === "retrieving" && (
         <div className="flex flex-col items-center justify-center py-12 space-y-4">
           <div className="relative">
             <div className="absolute inset-0 rounded-full blur-xl bg-primary/20 animate-pulse" />
             <Cpu className="w-12 h-12 text-primary animate-pulse relative z-10" />
           </div>
-          <div className="text-sm font-mono text-muted-foreground animate-pulse">Embedding query...</div>
+          <div className="text-sm font-mono text-muted-foreground animate-pulse">Embedding query and retrieving chunks…</div>
         </div>
       )}
 
-      {streamed && (streamed.steps.length > 0 || streamed.retrievedChunks.length > 0 || streamed.answer) && (
+      {result && (result.steps.length > 0 || result.retrievedChunks.length > 0 || result.answer) && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
           {/* Pipeline Steps */}
-          {streamed.steps.length > 0 && (
+          {result.steps.length > 0 && (
             <div className="p-4 rounded-md bg-secondary/30 border border-border/40">
               <h4 className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-2">
                 <Clock className="w-3.5 h-3.5" /> Pipeline Execution
               </h4>
               <div className="flex flex-col gap-2">
-                {streamed.steps.map((step, idx) => (
+                {result.steps.map((step, idx) => (
                   <div key={idx} className="flex items-center gap-3 text-sm font-mono">
                     <CheckCircle2 className="w-3.5 h-3.5 text-primary shrink-0" />
                     <div className="w-28 text-right text-xs text-primary/80 shrink-0">{step.step}</div>
@@ -167,7 +188,7 @@ export function QueryInterface() {
                     <div className="w-16 text-xs text-muted-foreground shrink-0">{step.durationMs}ms</div>
                   </div>
                 ))}
-                {isRunning && streamed.steps.length > 0 && !streamed.done && (
+                {phase === "generating" && (
                   <div className="flex items-center gap-3 text-sm font-mono opacity-60">
                     <Loader2 className="w-3.5 h-3.5 text-primary animate-spin shrink-0" />
                     <div className="w-28 text-right text-xs text-primary/60 shrink-0">Generate</div>
@@ -182,34 +203,34 @@ export function QueryInterface() {
           )}
 
           {/* Streaming Answer */}
-          {streamed.answer && (
+          {result.answer && (
             <Card className="border-primary/30 bg-background/50 shadow-lg relative overflow-hidden">
               <div className="absolute top-0 left-0 w-1 h-full bg-primary" />
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-mono flex items-center gap-2 text-primary">
                   <Zap className="w-4 h-4 fill-primary" />
                   Synthesized Answer
-                  {isRunning && !streamed.done && (
+                  {phase === "generating" && (
                     <span className="inline-block w-1.5 h-4 bg-primary animate-pulse ml-1 rounded-sm" />
                   )}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-sm font-mono leading-relaxed text-foreground whitespace-pre-wrap">
-                  {streamed.answer}
+                  {result.answer}
                 </p>
               </CardContent>
             </Card>
           )}
 
           {/* Retrieved Context */}
-          {streamed.retrievedChunks.length > 0 && (
+          {result.retrievedChunks.length > 0 && (
             <div className="space-y-3">
               <h4 className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                Retrieved Context ({streamed.retrievedChunks.length} chunks · semantic similarity)
+                Retrieved Context ({result.retrievedChunks.length} chunks · semantic similarity via all-MiniLM-L6-v2)
               </h4>
               <div className="grid gap-3">
-                {streamed.retrievedChunks.map((chunk, idx) => (
+                {result.retrievedChunks.map((chunk, idx) => (
                   <div key={chunk.id} className="p-3 rounded border border-border/40 bg-card relative">
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex gap-2 items-center">

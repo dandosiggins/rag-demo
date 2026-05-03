@@ -23,6 +23,7 @@ import type {
   HealthStatus,
   IngestDocumentBody,
   IngestDocumentResult,
+  RagGenerateBody,
   RagQueryBody,
   RagQueryResult,
   RagStats,
@@ -534,21 +535,22 @@ export const useRagQuery = <
 };
 
 /**
- * @summary Stream RAG pipeline (retrieve + generate via SSE)
+ * Accepts a question and an array of already-retrieved chunks (from /rag/query or /rag/retrieve), then streams the grounded LLM answer token-by-token as Server-Sent Events.
+ * @summary Stream LLM generation from pre-retrieved chunks via SSE
  */
 export const getRagGenerateUrl = () => {
   return `/api/rag/generate`;
 };
 
 export const ragGenerate = async (
-  ragQueryBody: RagQueryBody,
+  ragGenerateBody: RagGenerateBody,
   options?: RequestInit,
 ): Promise<string> => {
   return customFetch<string>(getRagGenerateUrl(), {
     ...options,
     method: "POST",
     headers: { "Content-Type": "application/json", ...options?.headers },
-    body: JSON.stringify(ragQueryBody),
+    body: JSON.stringify(ragGenerateBody),
   });
 };
 
@@ -559,14 +561,14 @@ export const getRagGenerateMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof ragGenerate>>,
     TError,
-    { data: BodyType<RagQueryBody> },
+    { data: BodyType<RagGenerateBody> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof ragGenerate>>,
   TError,
-  { data: BodyType<RagQueryBody> },
+  { data: BodyType<RagGenerateBody> },
   TContext
 > => {
   const mutationKey = ["ragGenerate"];
@@ -580,7 +582,7 @@ export const getRagGenerateMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof ragGenerate>>,
-    { data: BodyType<RagQueryBody> }
+    { data: BodyType<RagGenerateBody> }
   > = (props) => {
     const { data } = props ?? {};
 
@@ -593,11 +595,11 @@ export const getRagGenerateMutationOptions = <
 export type RagGenerateMutationResult = NonNullable<
   Awaited<ReturnType<typeof ragGenerate>>
 >;
-export type RagGenerateMutationBody = BodyType<RagQueryBody>;
+export type RagGenerateMutationBody = BodyType<RagGenerateBody>;
 export type RagGenerateMutationError = ErrorType<unknown>;
 
 /**
- * @summary Stream RAG pipeline (retrieve + generate via SSE)
+ * @summary Stream LLM generation from pre-retrieved chunks via SSE
  */
 export const useRagGenerate = <
   TError = ErrorType<unknown>,
@@ -606,14 +608,14 @@ export const useRagGenerate = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof ragGenerate>>,
     TError,
-    { data: BodyType<RagQueryBody> },
+    { data: BodyType<RagGenerateBody> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof ragGenerate>>,
   TError,
-  { data: BodyType<RagQueryBody> },
+  { data: BodyType<RagGenerateBody> },
   TContext
 > => {
   return useMutation(getRagGenerateMutationOptions(options));

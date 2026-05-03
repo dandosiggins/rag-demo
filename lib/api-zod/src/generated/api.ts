@@ -121,15 +121,27 @@ export const RagQueryResponse = zod.object({
 });
 
 /**
- * @summary Stream RAG pipeline (retrieve + generate via SSE)
+ * Accepts a question and an array of already-retrieved chunks (from /rag/query or /rag/retrieve), then streams the grounded LLM answer token-by-token as Server-Sent Events.
+ * @summary Stream LLM generation from pre-retrieved chunks via SSE
  */
-export const RagGenerateBody = zod.object({
-  question: zod.string(),
-  topK: zod
-    .number()
-    .optional()
-    .describe("Number of chunks to retrieve (default 3)"),
-});
+export const RagGenerateBody = zod
+  .object({
+    question: zod.string(),
+    retrievedChunks: zod.array(
+      zod.object({
+        id: zod.string(),
+        documentId: zod.string(),
+        documentTitle: zod.string(),
+        index: zod.number(),
+        text: zod.string(),
+        score: zod.number().describe("Similarity score (0-1)"),
+        wordCount: zod.number(),
+      }),
+    ),
+  })
+  .describe(
+    "Input for the streaming generate endpoint — pass the question plus the chunks already retrieved by \/rag\/query.",
+  );
 
 /**
  * @summary Get overall stats about the knowledge base
