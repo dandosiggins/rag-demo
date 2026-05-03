@@ -26,7 +26,7 @@ export function QueryInterface() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!question.trim() || phase !== "idle") return;
+    if (!question.trim() || phase === "retrieving" || phase === "generating") return;
 
     abortRef.current?.abort();
     const ctrl = new AbortController();
@@ -35,7 +35,7 @@ export function QueryInterface() {
     setPhase("retrieving");
     setResult(null);
 
-    // Step 1: retrieve chunks (non-streaming, uses generated hook)
+    // Step 1: retrieval-only — embed query and fetch top-K chunks (no LLM call)
     retrieveMutation.mutate(
       { data: { question, topK: 3 } },
       {
@@ -50,7 +50,7 @@ export function QueryInterface() {
           });
           setPhase("generating");
 
-          // Step 2: stream answer using pre-retrieved chunks
+          // Step 2: stream LLM answer using the pre-retrieved chunks
           try {
             const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             const res = await fetch(`${base}/api/rag/generate`, {
@@ -96,7 +96,8 @@ export function QueryInterface() {
                             ...s.steps,
                             {
                               step: "Generate",
-                              description: "Streamed grounded answer from language model using retrieved context",
+                              description:
+                                "Streamed grounded answer from language model using retrieved context",
                               durationMs: genMs,
                             },
                           ],
@@ -146,10 +147,15 @@ export function QueryInterface() {
               type="submit"
               className="h-11 px-6 font-mono bg-primary text-primary-foreground hover:bg-primary/90"
               disabled={isRunning || !question.trim()}
-              onClick={() => { if (phase === "done") setPhase("idle"); }}
             >
-              {isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
-              {isRunning ? "" : "Run RAG"}
+              {isRunning ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <Zap className="w-4 h-4 mr-2" />
+                  Run RAG
+                </>
+              )}
             </Button>
           </form>
         </CardContent>
@@ -161,7 +167,9 @@ export function QueryInterface() {
             <div className="absolute inset-0 rounded-full blur-xl bg-primary/20 animate-pulse" />
             <Cpu className="w-12 h-12 text-primary animate-pulse relative z-10" />
           </div>
-          <div className="text-sm font-mono text-muted-foreground animate-pulse">Embedding query and retrieving chunks…</div>
+          <div className="text-sm font-mono text-muted-foreground animate-pulse">
+            Embedding query and retrieving chunks…
+          </div>
         </div>
       )}
 
@@ -182,7 +190,9 @@ export function QueryInterface() {
                     <div className="flex-1 h-1.5 bg-background rounded-full overflow-hidden relative">
                       <div
                         className="absolute top-0 left-0 bottom-0 bg-primary/50 rounded-full transition-all duration-700"
-                        style={{ width: `${Math.min(100, Math.max(5, (step.durationMs / 3000) * 100))}%` }}
+                        style={{
+                          width: `${Math.min(100, Math.max(5, (step.durationMs / 3000) * 100))}%`,
+                        }}
                       />
                     </div>
                     <div className="w-16 text-xs text-muted-foreground shrink-0">{step.durationMs}ms</div>
@@ -227,14 +237,17 @@ export function QueryInterface() {
           {result.retrievedChunks.length > 0 && (
             <div className="space-y-3">
               <h4 className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                Retrieved Context ({result.retrievedChunks.length} chunks · semantic similarity via all-MiniLM-L6-v2)
+                Retrieved Context ({result.retrievedChunks.length} chunks · all-MiniLM-L6-v2 semantic similarity)
               </h4>
               <div className="grid gap-3">
                 {result.retrievedChunks.map((chunk, idx) => (
                   <div key={chunk.id} className="p-3 rounded border border-border/40 bg-card relative">
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex gap-2 items-center">
-                        <Badge variant="outline" className="font-mono text-[10px] border-primary/20 text-primary bg-primary/5 rounded-sm px-1 py-0">
+                        <Badge
+                          variant="outline"
+                          className="font-mono text-[10px] border-primary/20 text-primary bg-primary/5 rounded-sm px-1 py-0"
+                        >
                           Rank #{idx + 1}
                         </Badge>
                         <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[200px]">
@@ -251,12 +264,13 @@ export function QueryInterface() {
                     <div className="w-full h-1 bg-background rounded-full mb-3 overflow-hidden">
                       <div
                         className="h-full bg-primary"
-                        style={{ width: `${chunk.score * 100}%`, opacity: Math.max(0.3, chunk.score) }}
+                        style={{
+                          width: `${chunk.score * 100}%`,
+                          opacity: Math.max(0.3, chunk.score),
+                        }}
                       />
                     </div>
-                    <p className="text-xs text-foreground/70 font-mono leading-relaxed">
-                      {chunk.text}
-                    </p>
+                    <p className="text-xs text-foreground/70 font-mono leading-relaxed">{chunk.text}</p>
                   </div>
                 ))}
               </div>

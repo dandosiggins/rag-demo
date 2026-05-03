@@ -87,7 +87,8 @@ export const GetDocumentChunksResponse = zod.array(
 );
 
 /**
- * @summary Query the RAG pipeline (retrieve + generate)
+ * Embeds the question using all-MiniLM-L6-v2 and returns the top-K most similar chunks by cosine similarity. Does NOT call the LLM; pass the result to /rag/generate for streaming answer generation.
+ * @summary Retrieval only — embed query and return top-K matching chunks
  */
 export const RagQueryBody = zod.object({
   question: zod.string(),
@@ -97,28 +98,31 @@ export const RagQueryBody = zod.object({
     .describe("Number of chunks to retrieve (default 3)"),
 });
 
-export const RagQueryResponse = zod.object({
-  question: zod.string(),
-  retrievedChunks: zod.array(
-    zod.object({
-      id: zod.string(),
-      documentId: zod.string(),
-      documentTitle: zod.string(),
-      index: zod.number(),
-      text: zod.string(),
-      score: zod.number().describe("Similarity score (0-1)"),
-      wordCount: zod.number(),
-    }),
-  ),
-  answer: zod.string(),
-  processingSteps: zod.array(
-    zod.object({
-      step: zod.string(),
-      description: zod.string(),
-      durationMs: zod.number(),
-    }),
-  ),
-});
+export const RagQueryResponse = zod
+  .object({
+    question: zod.string(),
+    retrievedChunks: zod.array(
+      zod.object({
+        id: zod.string(),
+        documentId: zod.string(),
+        documentTitle: zod.string(),
+        index: zod.number(),
+        text: zod.string(),
+        score: zod.number().describe("Similarity score (0-1)"),
+        wordCount: zod.number(),
+      }),
+    ),
+    processingSteps: zod.array(
+      zod.object({
+        step: zod.string(),
+        description: zod.string(),
+        durationMs: zod.number(),
+      }),
+    ),
+  })
+  .describe(
+    "Retrieval-only result. Contains matched chunks and pipeline timing. No LLM generation — call \/rag\/generate with these chunks for the answer.",
+  );
 
 /**
  * Accepts a question and an array of already-retrieved chunks (from /rag/query or /rag/retrieve), then streams the grounded LLM answer token-by-token as Server-Sent Events.

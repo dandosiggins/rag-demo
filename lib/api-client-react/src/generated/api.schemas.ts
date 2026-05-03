@@ -72,10 +72,12 @@ export interface ProcessingStep {
   durationMs: number;
 }
 
+/**
+ * Retrieval-only result. Contains matched chunks and pipeline timing. No LLM generation — call /rag/generate with these chunks for the answer.
+ */
 export interface RagQueryResult {
   question: string;
   retrievedChunks: RetrievedChunk[];
-  answer: string;
   processingSteps: ProcessingStep[];
 }
 

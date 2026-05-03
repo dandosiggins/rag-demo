@@ -71,7 +71,8 @@ ragRouter.get("/rag/documents/:documentId/chunks", (req, res) => {
   res.json(chunks);
 });
 
-// Combined retrieve + generate (non-streaming)
+// Retrieval-only: embed the query and return the top-K matching chunks.
+// Does NOT call the LLM — generation is handled exclusively by /rag/generate.
 ragRouter.post("/rag/query", async (req, res) => {
   const { question, topK } = req.body as {
     question: string;
@@ -83,69 +84,11 @@ ragRouter.post("/rag/query", async (req, res) => {
     return;
   }
 
-  const steps: Array<{ step: string; description: string; durationMs: number }> = [];
+  const stats = getStats();
 
   const t0 = Date.now();
   const retrieved = await retrieveTopK(question, topK ?? 3);
   const embedMs = Date.now() - t0;
-
-  steps.push({
-    step: "Embed Query",
-    description: `Encoded query into a 384-dim semantic embedding vector using all-MiniLM-L6-v2`,
-    durationMs: embedMs,
-  });
-
-  steps.push({
-    step: "Retrieve",
-    description: `Computed cosine similarity against ${getStats().chunkCount} stored embeddings; retrieved top ${retrieved.length} chunks`,
-    durationMs: 0,
-  });
-
-  if (retrieved.length === 0) {
-    res.json({
-      question,
-      retrievedChunks: [],
-      answer:
-        "No documents have been ingested yet. Please upload some documents first so I can answer your question.",
-      processingSteps: steps,
-    });
-    return;
-  }
-
-  const context = retrieved
-    .map((c, i) => `[Chunk ${i + 1} from "${c.documentTitle}"]\n${c.text}`)
-    .join("\n\n");
-
-  const t1 = Date.now();
-  let answer = "";
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5.4",
-      max_completion_tokens: 8192,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a helpful assistant that answers questions based strictly on the provided context chunks. Be concise and accurate. If the context doesn't fully answer the question, say so clearly. Do not use emojis.",
-        },
-        {
-          role: "user",
-          content: `Context:\n${context}\n\nQuestion: ${question}`,
-        },
-      ],
-    });
-    answer = completion.choices[0]?.message?.content ?? "No answer generated.";
-  } catch (err) {
-    answer = "Error generating answer. Please try again.";
-    console.error("OpenAI error:", err);
-  }
-  const generateMs = Date.now() - t1;
-
-  steps.push({
-    step: "Generate",
-    description: `Sent question + retrieved context to the language model to synthesize a grounded answer`,
-    durationMs: generateMs,
-  });
 
   res.json({
     question,
@@ -160,12 +103,24 @@ ragRouter.post("/rag/query", async (req, res) => {
         wordCount,
       })
     ),
-    answer,
-    processingSteps: steps,
+    processingSteps: [
+      {
+        step: "Embed Query",
+        description: `Encoded query into a 384-dim semantic embedding using all-MiniLM-L6-v2`,
+        durationMs: embedMs,
+      },
+      {
+        step: "Retrieve",
+        description: `Computed cosine similarity against ${stats.chunkCount} stored chunk embeddings; retrieved top ${retrieved.length} results`,
+        durationMs: 0,
+      },
+    ],
   });
 });
 
-// Streaming generate endpoint: accepts pre-retrieved chunks + question, streams LLM answer via SSE
+// Streaming generation: accepts question + pre-retrieved chunks, streams the grounded
+// LLM answer token-by-token via Server-Sent Events. This is the only path that calls
+// the LLM — /rag/query is purely a retrieval endpoint.
 ragRouter.post("/rag/generate", async (req, res) => {
   const { question, retrievedChunks } = req.body as {
     question: string;
@@ -200,7 +155,7 @@ ragRouter.post("/rag/generate", async (req, res) => {
 
   if (retrievedChunks.length === 0) {
     sendEvent("answer", {
-      token: "No relevant chunks were provided. Please retrieve documents first.",
+      token: "No relevant chunks were provided. Please ingest some documents and run retrieval first.",
     });
     sendEvent("done", { generateMs: 0 });
     res.end();
@@ -221,7 +176,7 @@ ragRouter.post("/rag/generate", async (req, res) => {
         {
           role: "system",
           content:
-            "You are a helpful assistant that answers questions based strictly on the provided context chunks. Be concise and accurate. Do not use emojis.",
+            "You are a helpful assistant that answers questions based strictly on the provided context chunks. Be concise and accurate. If the context doesn't fully answer the question, say so. Do not use emojis.",
         },
         {
           role: "user",

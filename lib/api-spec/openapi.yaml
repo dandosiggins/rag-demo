@@ -103,7 +103,8 @@ paths:
     post:
       operationId: ragQuery
       tags: [rag]
-      summary: Query the RAG pipeline (retrieve + generate)
+      summary: Retrieval only — embed query and return top-K matching chunks
+      description: Embeds the question using all-MiniLM-L6-v2 and returns the top-K most similar chunks by cosine similarity. Does NOT call the LLM; pass the result to /rag/generate for streaming answer generation.
       requestBody:
         required: true
         content:
@@ -112,7 +113,7 @@ paths:
               $ref: "#/components/schemas/RagQueryBody"
       responses:
         "200":
-          description: Retrieved chunks and generated answer
+          description: Retrieved chunks with similarity scores and retrieval pipeline steps
           content:
             application/json:
               schema:
@@ -290,6 +291,7 @@ components:
 
     RagQueryResult:
       type: object
+      description: Retrieval-only result. Contains matched chunks and pipeline timing. No LLM generation — call /rag/generate with these chunks for the answer.
       properties:
         question:
           type: string
@@ -297,8 +299,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RetrievedChunk"
-        answer:
-          type: string
         processingSteps:
           type: array
           items:
@@ -306,7 +306,6 @@ components:
       required:
         - question
         - retrievedChunks
-        - answer
         - processingSteps
 
     ProcessingStep:
