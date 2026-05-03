@@ -1,5 +1,7 @@
 import { randomUUID } from "crypto";
 import { pipeline, env } from "@xenova/transformers";
+import { db, ragDocuments, ragChunks } from "@workspace/db";
+import { eq, sql } from "drizzle-orm";
 
 // Allow both cached local models and remote downloads from HuggingFace Hub.
 // On first run the model weights (~23 MB) are fetched and cached locally;
@@ -43,9 +45,6 @@ export interface StoredDocument {
   chunkCount: number;
   createdAt: string;
 }
-
-const documents = new Map<string, StoredDocument>();
-const chunks: StoredChunk[] = [];
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
@@ -177,35 +176,73 @@ export async function ingestDocument(
     createdAt: new Date().toISOString(),
   };
 
-  documents.set(docId, doc);
-  chunks.push(...newChunks);
+  await db.transaction(async (tx) => {
+    await tx.insert(ragDocuments).values({
+      id: docId,
+      title,
+      chunkCount: newChunks.length,
+    });
+
+    await tx.insert(ragChunks).values(
+      newChunks.map((c) => ({
+        id: c.id,
+        documentId: c.documentId,
+        documentTitle: c.documentTitle,
+        index: c.index,
+        text: c.text,
+        wordCount: c.wordCount,
+        embedding: c.embedding,
+      }))
+    );
+  });
 
   return { document: doc, newChunks };
 }
 
-export function listDocuments(): StoredDocument[] {
-  return Array.from(documents.values());
+export async function listDocuments(): Promise<StoredDocument[]> {
+  const rows = await db.select().from(ragDocuments).orderBy(ragDocuments.createdAt);
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    chunkCount: r.chunkCount,
+    createdAt: r.createdAt.toISOString(),
+  }));
 }
 
-export function getDocument(id: string): StoredDocument | undefined {
-  return documents.get(id);
+export async function getDocument(id: string): Promise<StoredDocument | undefined> {
+  const rows = await db.select().from(ragDocuments).where(eq(ragDocuments.id, id));
+  if (rows.length === 0) return undefined;
+  const r = rows[0];
+  return {
+    id: r.id,
+    title: r.title,
+    chunkCount: r.chunkCount,
+    createdAt: r.createdAt.toISOString(),
+  };
 }
 
-export function deleteDocument(id: string): boolean {
-  if (!documents.has(id)) return false;
-  documents.delete(id);
-  const idxs = chunks.reduce<number[]>((acc, c, i) => {
-    if (c.documentId === id) acc.push(i);
-    return acc;
-  }, []);
-  for (let i = idxs.length - 1; i >= 0; i--) {
-    chunks.splice(idxs[i], 1);
-  }
+export async function deleteDocument(id: string): Promise<boolean> {
+  const existing = await db.select().from(ragDocuments).where(eq(ragDocuments.id, id));
+  if (existing.length === 0) return false;
+  await db.delete(ragDocuments).where(eq(ragDocuments.id, id));
   return true;
 }
 
-export function getChunksForDocument(docId: string): StoredChunk[] {
-  return chunks.filter((c) => c.documentId === docId);
+export async function getChunksForDocument(docId: string): Promise<StoredChunk[]> {
+  const rows = await db
+    .select()
+    .from(ragChunks)
+    .where(eq(ragChunks.documentId, docId))
+    .orderBy(ragChunks.index);
+  return rows.map((r) => ({
+    id: r.id,
+    documentId: r.documentId,
+    documentTitle: r.documentTitle,
+    index: r.index,
+    text: r.text,
+    wordCount: r.wordCount,
+    embedding: r.embedding as number[],
+  }));
 }
 
 export async function retrieveTopK(
@@ -213,19 +250,40 @@ export async function retrieveTopK(
   topK = 3
 ): Promise<Array<StoredChunk & { score: number }>> {
   const queryEmbedding = await embed(query);
-  return chunks
-    .map((chunk) => ({
-      ...chunk,
-      score: cosineSimilarity(queryEmbedding, chunk.embedding),
+  const rows = await db.select().from(ragChunks);
+  return rows
+    .map((r) => ({
+      id: r.id,
+      documentId: r.documentId,
+      documentTitle: r.documentTitle,
+      index: r.index,
+      text: r.text,
+      wordCount: r.wordCount,
+      embedding: r.embedding as number[],
+      score: cosineSimilarity(queryEmbedding, r.embedding as number[]),
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
 }
 
-export function getStats() {
+export async function getStats(): Promise<{
+  documentCount: number;
+  chunkCount: number;
+  totalWords: number;
+}> {
+  const docResult = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(ragDocuments);
+  const chunkResult = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+      totalWords: sql<number>`coalesce(sum(word_count), 0)::int`,
+    })
+    .from(ragChunks);
+
   return {
-    documentCount: documents.size,
-    chunkCount: chunks.length,
-    totalWords: chunks.reduce((sum, c) => sum + c.wordCount, 0),
+    documentCount: docResult[0]?.count ?? 0,
+    chunkCount: chunkResult[0]?.count ?? 0,
+    totalWords: chunkResult[0]?.totalWords ?? 0,
   };
 }

@@ -27,8 +27,8 @@ function clampedInt(v: unknown, min: number, max: number, fallback: number): num
 
 // ─── routes ─────────────────────────────────────────────────────────────────
 
-ragRouter.get("/rag/documents", (_req, res) => {
-  res.json(listDocuments());
+ragRouter.get("/rag/documents", async (_req, res) => {
+  res.json(await listDocuments());
 });
 
 ragRouter.post("/rag/documents", async (req, res) => {
@@ -72,9 +72,9 @@ ragRouter.post("/rag/documents", async (req, res) => {
   });
 });
 
-ragRouter.delete("/rag/documents/:documentId", (req, res) => {
+ragRouter.delete("/rag/documents/:documentId", async (req, res) => {
   const { documentId } = req.params;
-  const success = deleteDocument(documentId);
+  const success = await deleteDocument(documentId);
   if (!success) {
     res.status(404).json({ error: "Document not found" });
     return;
@@ -82,14 +82,14 @@ ragRouter.delete("/rag/documents/:documentId", (req, res) => {
   res.json({ success: true, documentId });
 });
 
-ragRouter.get("/rag/documents/:documentId/chunks", (req, res) => {
+ragRouter.get("/rag/documents/:documentId/chunks", async (req, res) => {
   const { documentId } = req.params;
-  const doc = getDocument(documentId);
+  const doc = await getDocument(documentId);
   if (!doc) {
     res.status(404).json({ error: "Document not found" });
     return;
   }
-  const chunks = getChunksForDocument(documentId).map(
+  const chunks = (await getChunksForDocument(documentId)).map(
     ({ id, documentId: dId, index, text, wordCount }) => ({
       id,
       documentId: dId,
@@ -119,7 +119,7 @@ ragRouter.post("/rag/query", async (req, res) => {
     return;
   }
 
-  const stats = getStats();
+  const stats = await getStats();
 
   const t0 = Date.now();
   const retrieved = await retrieveTopK(question.trim(), k);
@@ -239,8 +239,8 @@ ragRouter.post("/rag/generate", async (req, res) => {
   res.end();
 });
 
-ragRouter.get("/rag/stats", (_req, res) => {
-  res.json(getStats());
+ragRouter.get("/rag/stats", async (_req, res) => {
+  res.json(await getStats());
 });
 
 export default ragRouter;
