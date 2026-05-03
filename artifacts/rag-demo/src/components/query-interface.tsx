@@ -237,7 +237,7 @@ export function QueryInterface() {
           {result.retrievedChunks.length > 0 && (
             <div className="space-y-3">
               <h4 className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                Retrieved Context ({result.retrievedChunks.length} chunks · all-MiniLM-L6-v2 semantic similarity)
+                Retrieved Context ({result.retrievedChunks.length} chunks · text-embedding-3-small semantic similarity)
               </h4>
               <div className="grid gap-3">
                 {result.retrievedChunks.map((chunk, idx) => (

@@ -138,7 +138,7 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
                 disabled={ingestDoc.isPending}
               />
               <Textarea
-                placeholder="Paste document text here to be chunked and embedded with all-MiniLM-L6-v2..."
+                placeholder="Paste document text here to be chunked and embedded with text-embedding-3-small..."
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 className="min-h-[120px] font-mono text-sm resize-none bg-background border-border/50 focus-visible:ring-primary"
