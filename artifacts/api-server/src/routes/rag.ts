@@ -16,7 +16,7 @@ ragRouter.get("/rag/documents", (_req, res) => {
   res.json(listDocuments());
 });
 
-ragRouter.post("/rag/documents", (req, res) => {
+ragRouter.post("/rag/documents", async (req, res) => {
   const { title, text, chunkSize } = req.body as {
     title: string;
     text: string;
@@ -28,7 +28,7 @@ ragRouter.post("/rag/documents", (req, res) => {
     return;
   }
 
-  const { document, newChunks } = ingestDocument(title, text, chunkSize ?? 100);
+  const { document, newChunks } = await ingestDocument(title, text, chunkSize ?? 100);
 
   res.json({
     document,
@@ -85,18 +85,18 @@ ragRouter.post("/rag/query", async (req, res) => {
   const steps: Array<{ step: string; description: string; durationMs: number }> = [];
 
   const t0 = Date.now();
-  const retrieved = retrieveTopK(question, topK ?? 3);
-  const retrieveMs = Date.now() - t0;
+  const retrieved = await retrieveTopK(question, topK ?? 3);
+  const embedMs = Date.now() - t0;
 
   steps.push({
-    step: "Vectorize Query",
-    description: `Converted query into a TF-IDF vector and computed cosine similarity against ${getStats().chunkCount} stored chunks`,
-    durationMs: retrieveMs,
+    step: "Embed Query",
+    description: `Encoded query into a 384-dim semantic embedding vector using all-MiniLM-L6-v2`,
+    durationMs: embedMs,
   });
 
   steps.push({
     step: "Retrieve",
-    description: `Retrieved top ${retrieved.length} most relevant chunks from the knowledge base`,
+    description: `Computed cosine similarity against ${getStats().chunkCount} stored embeddings; retrieved top ${retrieved.length} chunks`,
     durationMs: 0,
   });
 
@@ -128,8 +128,8 @@ Do not use emojis.`;
   let answer = "";
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-5.4",
-      max_completion_tokens: 1024,
+      model: "gpt-4o-mini",
+      max_tokens: 1024,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
@@ -144,7 +144,7 @@ Do not use emojis.`;
 
   steps.push({
     step: "Generate",
-    description: `Sent the question + retrieved context to the language model and generated a grounded answer`,
+    description: `Sent question + retrieved context to the language model to synthesize a grounded answer`,
     durationMs: generateMs,
   });
 
@@ -164,6 +164,103 @@ Do not use emojis.`;
     answer,
     processingSteps: steps,
   });
+});
+
+// Streaming generate endpoint: retrieve chunks then stream the LLM answer via SSE
+ragRouter.post("/rag/generate", async (req, res) => {
+  const { question, topK } = req.body as { question: string; topK?: number };
+
+  if (!question) {
+    res.status(400).json({ error: "question is required" });
+    return;
+  }
+
+  const t0 = Date.now();
+  const retrieved = await retrieveTopK(question, topK ?? 3);
+  const embedMs = Date.now() - t0;
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const sendEvent = (event: string, data: unknown) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  sendEvent("steps", {
+    steps: [
+      {
+        step: "Embed Query",
+        description: `Encoded query into a 384-dim semantic embedding using all-MiniLM-L6-v2`,
+        durationMs: embedMs,
+      },
+      {
+        step: "Retrieve",
+        description: `Found top ${retrieved.length} relevant chunks via cosine similarity`,
+        durationMs: 0,
+      },
+    ],
+  });
+
+  sendEvent("chunks", {
+    retrievedChunks: retrieved.map(
+      ({ id, documentId, documentTitle, index, text, score, wordCount }) => ({
+        id,
+        documentId,
+        documentTitle,
+        index,
+        text,
+        score,
+        wordCount,
+      })
+    ),
+  });
+
+  if (retrieved.length === 0) {
+    sendEvent("answer", {
+      token: "No documents have been ingested yet. Please add some first.",
+    });
+    sendEvent("done", { generateMs: 0 });
+    res.end();
+    return;
+  }
+
+  const context = retrieved
+    .map((c, i) => `[Chunk ${i + 1} from "${c.documentTitle}"]\n${c.text}`)
+    .join("\n\n");
+
+  const t1 = Date.now();
+  try {
+    const stream = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 1024,
+      stream: true,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a helpful assistant that answers questions based strictly on the provided context chunks. Be concise and accurate. Do not use emojis.",
+        },
+        {
+          role: "user",
+          content: `Context:\n${context}\n\nQuestion: ${question}`,
+        },
+      ],
+    });
+
+    for await (const chunk of stream) {
+      const token = chunk.choices[0]?.delta?.content;
+      if (token) sendEvent("answer", { token });
+    }
+  } catch (err) {
+    console.error("OpenAI streaming error:", err);
+    sendEvent("answer", { token: "Error generating answer. Please try again." });
+  }
+
+  const generateMs = Date.now() - t1;
+  sendEvent("done", { generateMs });
+  res.end();
 });
 
 ragRouter.get("/rag/stats", (_req, res) => {

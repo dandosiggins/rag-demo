@@ -118,6 +118,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/RagQueryResult"
 
+  /rag/generate:
+    post:
+      operationId: ragGenerate
+      tags: [rag]
+      summary: Stream RAG pipeline (retrieve + generate via SSE)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagQueryBody"
+      responses:
+        "200":
+          description: Server-Sent Events stream of pipeline stages and answer tokens
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
   /rag/stats:
     get:
       operationId: getRagStats

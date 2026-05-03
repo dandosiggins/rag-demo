@@ -534,6 +534,92 @@ export const useRagQuery = <
 };
 
 /**
+ * @summary Stream RAG pipeline (retrieve + generate via SSE)
+ */
+export const getRagGenerateUrl = () => {
+  return `/api/rag/generate`;
+};
+
+export const ragGenerate = async (
+  ragQueryBody: RagQueryBody,
+  options?: RequestInit,
+): Promise<string> => {
+  return customFetch<string>(getRagGenerateUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(ragQueryBody),
+  });
+};
+
+export const getRagGenerateMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ragGenerate>>,
+    TError,
+    { data: BodyType<RagQueryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ragGenerate>>,
+  TError,
+  { data: BodyType<RagQueryBody> },
+  TContext
+> => {
+  const mutationKey = ["ragGenerate"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ragGenerate>>,
+    { data: BodyType<RagQueryBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return ragGenerate(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RagGenerateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ragGenerate>>
+>;
+export type RagGenerateMutationBody = BodyType<RagQueryBody>;
+export type RagGenerateMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Stream RAG pipeline (retrieve + generate via SSE)
+ */
+export const useRagGenerate = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ragGenerate>>,
+    TError,
+    { data: BodyType<RagQueryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof ragGenerate>>,
+  TError,
+  { data: BodyType<RagQueryBody> },
+  TContext
+> => {
+  return useMutation(getRagGenerateMutationOptions(options));
+};
+
+/**
  * @summary Get overall stats about the knowledge base
  */
 export const getGetRagStatsUrl = () => {

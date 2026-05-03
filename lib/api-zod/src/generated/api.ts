@@ -121,6 +121,17 @@ export const RagQueryResponse = zod.object({
 });
 
 /**
+ * @summary Stream RAG pipeline (retrieve + generate via SSE)
+ */
+export const RagGenerateBody = zod.object({
+  question: zod.string(),
+  topK: zod
+    .number()
+    .optional()
+    .describe("Number of chunks to retrieve (default 3)"),
+});
+
+/**
  * @summary Get overall stats about the knowledge base
  */
 export const GetRagStatsResponse = zod.object({

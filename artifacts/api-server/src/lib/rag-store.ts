@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
 
 export interface StoredChunk {
   id: string;
@@ -7,7 +8,7 @@ export interface StoredChunk {
   index: number;
   text: string;
   wordCount: number;
-  tfidf: Map<string, number>;
+  embedding: number[];
 }
 
 export interface StoredDocument {
@@ -20,51 +21,33 @@ export interface StoredDocument {
 const documents = new Map<string, StoredDocument>();
 const chunks: StoredChunk[] = [];
 
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 1);
+let embedder: FeatureExtractionPipeline | null = null;
+let embedderLoading: Promise<FeatureExtractionPipeline> | null = null;
+
+async function getEmbedder(): Promise<FeatureExtractionPipeline> {
+  if (embedder) return embedder;
+  if (embedderLoading) return embedderLoading;
+  embedderLoading = pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
+    quantized: true,
+  }) as Promise<FeatureExtractionPipeline>;
+  embedder = await embedderLoading;
+  return embedder;
 }
 
-const STOP_WORDS = new Set([
-  "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-  "of", "with", "by", "from", "is", "was", "are", "were", "be", "been",
-  "has", "have", "had", "do", "does", "did", "will", "would", "could",
-  "should", "may", "might", "that", "this", "it", "its", "as", "not",
-  "no", "if", "so", "up", "out", "about", "into", "through", "during",
-  "each", "which", "who", "whom", "what", "when", "where", "how", "all",
-  "both", "few", "more", "most", "other", "some", "such", "than", "then",
-  "these", "those", "can", "after", "before", "also", "their", "they",
-  "there", "them", "we", "our", "you", "your", "my", "me", "he", "she",
-  "his", "her", "him", "us", "i", "any",
-]);
-
-function computeTF(tokens: string[]): Map<string, number> {
-  const freq = new Map<string, number>();
-  const filtered = tokens.filter((t) => !STOP_WORDS.has(t));
-  for (const token of filtered) {
-    freq.set(token, (freq.get(token) ?? 0) + 1);
-  }
-  const max = Math.max(1, ...freq.values());
-  const tf = new Map<string, number>();
-  for (const [term, count] of freq) {
-    tf.set(term, count / max);
-  }
-  return tf;
+async function embed(text: string): Promise<number[]> {
+  const model = await getEmbedder();
+  const output = await model(text, { pooling: "mean", normalize: true });
+  return Array.from(output.data as Float32Array);
 }
 
-function cosineSimilarity(a: Map<string, number>, b: Map<string, number>): number {
+function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
   let magA = 0;
   let magB = 0;
-  for (const [term, valA] of a) {
-    dot += valA * (b.get(term) ?? 0);
-    magA += valA * valA;
-  }
-  for (const valB of b.values()) {
-    magB += valB * valB;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    magA += a[i] * a[i];
+    magB += b[i] * b[i];
   }
   if (magA === 0 || magB === 0) return 0;
   return dot / (Math.sqrt(magA) * Math.sqrt(magB));
@@ -79,25 +62,28 @@ export function chunkText(text: string, chunkSize = 100): string[] {
   return result;
 }
 
-export function ingestDocument(
+export async function ingestDocument(
   title: string,
   text: string,
   chunkSize = 100
-): { document: StoredDocument; newChunks: StoredChunk[] } {
+): Promise<{ document: StoredDocument; newChunks: StoredChunk[] }> {
   const docId = randomUUID();
   const rawChunks = chunkText(text, chunkSize);
-  const newChunks: StoredChunk[] = rawChunks.map((chunkText, idx) => {
-    const tokens = tokenize(chunkText);
-    return {
-      id: randomUUID(),
-      documentId: docId,
-      documentTitle: title,
-      index: idx,
-      text: chunkText,
-      wordCount: chunkText.split(/\s+/).length,
-      tfidf: computeTF(tokens),
-    };
-  });
+
+  const newChunks: StoredChunk[] = await Promise.all(
+    rawChunks.map(async (chunkText, idx) => {
+      const embedding = await embed(chunkText);
+      return {
+        id: randomUUID(),
+        documentId: docId,
+        documentTitle: title,
+        index: idx,
+        text: chunkText,
+        wordCount: chunkText.split(/\s+/).length,
+        embedding,
+      };
+    })
+  );
 
   const doc: StoredDocument = {
     id: docId,
@@ -137,11 +123,16 @@ export function getChunksForDocument(docId: string): StoredChunk[] {
   return chunks.filter((c) => c.documentId === docId);
 }
 
-export function retrieveTopK(query: string, topK = 3): Array<StoredChunk & { score: number }> {
-  const queryTokens = tokenize(query);
-  const queryTF = computeTF(queryTokens);
+export async function retrieveTopK(
+  query: string,
+  topK = 3
+): Promise<Array<StoredChunk & { score: number }>> {
+  const queryEmbedding = await embed(query);
   return chunks
-    .map((chunk) => ({ ...chunk, score: cosineSimilarity(queryTF, chunk.tfidf) }))
+    .map((chunk) => ({
+      ...chunk,
+      score: cosineSimilarity(queryEmbedding, chunk.embedding),
+    }))
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
 }
