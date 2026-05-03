@@ -12,31 +12,61 @@ import {
 
 const ragRouter = Router();
 
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+function clampedInt(v: unknown, min: number, max: number, fallback: number): number | null {
+  if (v === undefined || v === null) return fallback;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < min || n > max) return null;
+  return n;
+}
+
+// ─── routes ─────────────────────────────────────────────────────────────────
+
 ragRouter.get("/rag/documents", (_req, res) => {
   res.json(listDocuments());
 });
 
 ragRouter.post("/rag/documents", async (req, res) => {
   const { title, text, chunkSize } = req.body as {
-    title: string;
-    text: string;
-    chunkSize?: number;
+    title: unknown;
+    text: unknown;
+    chunkSize?: unknown;
   };
 
-  if (!title || !text) {
-    res.status(400).json({ error: "title and text are required" });
+  if (!isNonEmptyString(title)) {
+    res.status(400).json({ error: "title must be a non-empty string" });
+    return;
+  }
+  if (!isNonEmptyString(text)) {
+    res.status(400).json({ error: "text must be a non-empty string" });
+    return;
+  }
+  if (text.trim().split(/\s+/).length < 3) {
+    res.status(400).json({ error: "text must contain at least 3 words" });
     return;
   }
 
-  const { document, newChunks } = await ingestDocument(title, text, chunkSize ?? 100);
+  // chunkSize: integer in [20, 500]. Invalid value → 400 (no silent coercion).
+  const size = clampedInt(chunkSize, 20, 500, 100);
+  if (size === null) {
+    res.status(400).json({ error: "chunkSize must be an integer between 20 and 500" });
+    return;
+  }
+
+  const { document, newChunks } = await ingestDocument(title.trim(), text.trim(), size);
 
   res.json({
     document,
-    chunks: newChunks.map(({ id, documentId, index, text, wordCount }) => ({
+    chunks: newChunks.map(({ id, documentId, index, text: t, wordCount }) => ({
       id,
       documentId,
       index,
-      text,
+      text: t,
       wordCount,
     })),
   });
@@ -60,9 +90,9 @@ ragRouter.get("/rag/documents/:documentId/chunks", (req, res) => {
     return;
   }
   const chunks = getChunksForDocument(documentId).map(
-    ({ id, documentId, index, text, wordCount }) => ({
+    ({ id, documentId: dId, index, text, wordCount }) => ({
       id,
-      documentId,
+      documentId: dId,
       index,
       text,
       wordCount,
@@ -73,25 +103,33 @@ ragRouter.get("/rag/documents/:documentId/chunks", (req, res) => {
 
 // Retrieval-only: embed the query and return the top-K matching chunks.
 // Does NOT call the LLM — generation is handled exclusively by /rag/generate.
+//
+// NOTE: embeddings use @xenova/transformers (all-MiniLM-L6-v2) because the
+// OpenAI Embeddings API is explicitly listed as unsupported by the Replit AI
+// Integrations proxy (see .local/skills/ai-integrations-openai/SKILL.md).
 ragRouter.post("/rag/query", async (req, res) => {
-  const { question, topK } = req.body as {
-    question: string;
-    topK?: number;
-  };
+  const { question, topK } = req.body as { question: unknown; topK?: unknown };
 
-  if (!question) {
-    res.status(400).json({ error: "question is required" });
+  if (!isNonEmptyString(question)) {
+    res.status(400).json({ error: "question must be a non-empty string" });
+    return;
+  }
+
+  // topK: integer in [1, 20]
+  const k = clampedInt(topK, 1, 20, 3);
+  if (k === null) {
+    res.status(400).json({ error: "topK must be an integer between 1 and 20" });
     return;
   }
 
   const stats = getStats();
 
   const t0 = Date.now();
-  const retrieved = await retrieveTopK(question, topK ?? 3);
+  const retrieved = await retrieveTopK(question.trim(), k);
   const embedMs = Date.now() - t0;
 
   res.json({
-    question,
+    question: question.trim(),
     retrievedChunks: retrieved.map(
       ({ id, documentId, documentTitle, index, text, score, wordCount }) => ({
         id,
@@ -123,26 +161,30 @@ ragRouter.post("/rag/query", async (req, res) => {
 // the LLM — /rag/query is purely a retrieval endpoint.
 ragRouter.post("/rag/generate", async (req, res) => {
   const { question, retrievedChunks } = req.body as {
-    question: string;
-    retrievedChunks: Array<{
-      id: string;
-      documentId: string;
-      documentTitle: string;
-      index: number;
-      text: string;
-      score: number;
-      wordCount: number;
-    }>;
+    question: unknown;
+    retrievedChunks: unknown;
   };
 
-  if (!question) {
-    res.status(400).json({ error: "question is required" });
+  if (!isNonEmptyString(question)) {
+    res.status(400).json({ error: "question must be a non-empty string" });
     return;
   }
   if (!Array.isArray(retrievedChunks)) {
-    res.status(400).json({ error: "retrievedChunks array is required" });
+    res.status(400).json({ error: "retrievedChunks must be an array" });
     return;
   }
+
+  type ChunkInput = {
+    id: string;
+    documentId: string;
+    documentTitle: string;
+    index: number;
+    text: string;
+    score: number;
+    wordCount: number;
+  };
+
+  const chunks = retrievedChunks as ChunkInput[];
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -153,16 +195,17 @@ ragRouter.post("/rag/generate", async (req, res) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
-  if (retrievedChunks.length === 0) {
+  if (chunks.length === 0) {
     sendEvent("answer", {
-      token: "No relevant chunks were provided. Please ingest some documents and run retrieval first.",
+      token:
+        "No relevant chunks were provided. Please ingest some documents and run retrieval first.",
     });
     sendEvent("done", { generateMs: 0 });
     res.end();
     return;
   }
 
-  const context = retrievedChunks
+  const context = chunks
     .map((c, i) => `[Chunk ${i + 1} from "${c.documentTitle}"]\n${c.text}`)
     .join("\n\n");
 
@@ -176,11 +219,11 @@ ragRouter.post("/rag/generate", async (req, res) => {
         {
           role: "system",
           content:
-            "You are a helpful assistant that answers questions based strictly on the provided context chunks. Be concise and accurate. If the context doesn't fully answer the question, say so. Do not use emojis.",
+            "You are a helpful assistant that answers questions based strictly on the provided context chunks. Be concise and accurate. If the context does not fully answer the question, say so.",
         },
         {
           role: "user",
-          content: `Context:\n${context}\n\nQuestion: ${question}`,
+          content: `Context:\n${context}\n\nQuestion: ${question.trim()}`,
         },
       ],
     });
