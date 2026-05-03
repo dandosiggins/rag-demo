@@ -1,5 +1,8 @@
 import { randomUUID } from "crypto";
-import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
+import { openai } from "@workspace/integrations-openai-ai-server";
+
+// Embeddings use OpenAI text-embedding-3-small (1536-dim) via the Replit AI
+// Integrations proxy, so no local model weights or ONNX runtime are required.
 
 export interface StoredChunk {
   id: string;
@@ -21,23 +24,12 @@ export interface StoredDocument {
 const documents = new Map<string, StoredDocument>();
 const chunks: StoredChunk[] = [];
 
-let embedder: FeatureExtractionPipeline | null = null;
-let embedderLoading: Promise<FeatureExtractionPipeline> | null = null;
-
-async function getEmbedder(): Promise<FeatureExtractionPipeline> {
-  if (embedder) return embedder;
-  if (embedderLoading) return embedderLoading;
-  embedderLoading = pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
-    quantized: true,
-  }) as Promise<FeatureExtractionPipeline>;
-  embedder = await embedderLoading;
-  return embedder;
-}
-
 async function embed(text: string): Promise<number[]> {
-  const model = await getEmbedder();
-  const output = await model(text, { pooling: "mean", normalize: true });
-  return Array.from(output.data as Float32Array);
+  const response = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: text,
+  });
+  return response.data[0].embedding;
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -81,7 +73,6 @@ export function chunkText(text: string, maxWords = 100): string[] {
   };
 
   const splitBySentences = (para: string): string[] => {
-    // Split on sentence-ending punctuation followed by whitespace / end
     const raw = para.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) ?? [para];
     const sentences: string[] = [];
     let buf = "";
@@ -93,7 +84,6 @@ export function chunkText(text: string, maxWords = 100): string[] {
         bufWords += sw;
       } else {
         if (buf) sentences.push(buf);
-        // If a single sentence exceeds the limit, hard-split by words
         if (sw > maxWords) {
           const words = s.trim().split(/\s+/);
           for (let i = 0; i < words.length; i += maxWords) {
@@ -115,7 +105,6 @@ export function chunkText(text: string, maxWords = 100): string[] {
     const wc = para.split(/\s+/).length;
 
     if (wc > maxWords) {
-      // Paragraph too large — flush current buffer, then split into sentences
       flush();
       const parts = splitBySentences(para);
       for (const part of parts) {
@@ -130,11 +119,9 @@ export function chunkText(text: string, maxWords = 100): string[] {
         }
       }
     } else if (currentWords + wc <= maxWords) {
-      // Fits — accumulate
       currentParts.push(para);
       currentWords += wc;
     } else {
-      // Would overflow — flush and start fresh
       flush();
       currentParts.push(para);
       currentWords = wc;
