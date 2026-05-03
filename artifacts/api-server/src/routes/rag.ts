@@ -1,4 +1,6 @@
 import { Router } from "express";
+import multer from "multer";
+import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import {
   ingestDocument,
@@ -11,6 +13,17 @@ import {
 } from "../lib/rag-store.js";
 
 const ragRouter = Router();
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    const allowed = ["application/pdf", "text/plain"];
+    const extOk = /\.(pdf|txt)$/i.test(file.originalname);
+    if (allowed.includes(file.mimetype) || extOk) cb(null, true);
+    else cb(new Error("Only .pdf and .txt files are supported"));
+  },
+});
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -59,6 +72,82 @@ ragRouter.post("/rag/documents", async (req, res) => {
   }
 
   const { document, newChunks } = await ingestDocument(title.trim(), text.trim(), size);
+
+  res.json({
+    document,
+    chunks: newChunks.map(({ id, documentId, index, text: t, wordCount }) => ({
+      id,
+      documentId,
+      index,
+      text: t,
+      wordCount,
+    })),
+  });
+});
+
+// ─── file upload endpoint ─────────────────────────────────────────────────────
+ragRouter.post("/rag/upload", (req, res, next) => {
+  upload.single("file")(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        res.status(413).json({ error: "File exceeds the 20 MB limit" });
+      } else {
+        res.status(400).json({ error: err.message });
+      }
+      return;
+    }
+    if (err instanceof Error) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    next();
+  });
+}, async (req, res) => {
+  const file = req.file;
+  if (!file) {
+    res.status(400).json({ error: "No file uploaded" });
+    return;
+  }
+
+  const rawTitle = req.body?.title as string | undefined;
+  const rawChunkSize = req.body?.chunkSize;
+
+  const isPdf =
+    file.mimetype === "application/pdf" ||
+    file.originalname.toLowerCase().endsWith(".pdf");
+
+  let text: string;
+  try {
+    if (isPdf) {
+      const parsed = await pdfParse(file.buffer);
+      text = parsed.text;
+    } else {
+      text = file.buffer.toString("utf-8");
+    }
+  } catch {
+    res.status(422).json({ error: "Failed to extract text from file" });
+    return;
+  }
+
+  text = text.trim();
+  if (text.split(/\s+/).length < 3) {
+    res.status(400).json({ error: "Extracted text must contain at least 3 words" });
+    return;
+  }
+
+  const title = rawTitle?.trim() || file.originalname.replace(/\.(pdf|txt)$/i, "");
+  if (!title) {
+    res.status(400).json({ error: "title must be a non-empty string" });
+    return;
+  }
+
+  const size = clampedInt(rawChunkSize, 20, 500, 100);
+  if (size === null) {
+    res.status(400).json({ error: "chunkSize must be an integer between 20 and 500" });
+    return;
+  }
+
+  const { document, newChunks } = await ingestDocument(title, text, size);
 
   res.json({
     document,

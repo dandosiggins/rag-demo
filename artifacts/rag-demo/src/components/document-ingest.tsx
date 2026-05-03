@@ -23,6 +23,7 @@ const SAMPLE_DOCS = [
 export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: string) => void }) {
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
+  const [isUploadPending, setIsUploadPending] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -30,6 +31,8 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
   const { data: documents, isLoading: isLoadingDocs } = useListDocuments();
   const ingestDoc = useIngestDocument();
   const deleteDoc = useDeleteDocument();
+
+  const isPending = ingestDoc.isPending || isUploadPending;
 
   const handleIngest = (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,20 +56,62 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
     );
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.name.endsWith(".txt") && file.type !== "text/plain") {
-      toast({ title: "Only .txt files are supported", variant: "destructive" });
+
+    const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf";
+    const isTxt = file.name.toLowerCase().endsWith(".txt") || file.type === "text/plain";
+
+    if (!isPdf && !isTxt) {
+      toast({ title: "Only .pdf and .txt files are supported", variant: "destructive" });
+      e.target.value = "";
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const content = ev.target?.result as string;
-      setText(content);
-      if (!title) setTitle(file.name.replace(/\.txt$/i, ""));
-    };
-    reader.readAsText(file);
+
+    const inferredTitle = file.name.replace(/\.(pdf|txt)$/i, "");
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("title", title || inferredTitle);
+    formData.append("chunkSize", "80");
+
+    setIsUploadPending(true);
+    try {
+      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const response = await fetch(`${base}/api/rag/upload`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Upload failed");
+      }
+
+      const res = await response.json() as {
+        document: { id: string };
+        chunks: Array<{ wordCount: number }>;
+      };
+
+      setTitle("");
+      setText("");
+      toast({
+        title: "Document Ingested",
+        description: `Created ${res.chunks.length} chunks from ${res.chunks.reduce((n, c) => n + c.wordCount, 0)} words.`,
+      });
+      queryClient.invalidateQueries({ queryKey: getListDocumentsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetRagStatsQueryKey() });
+      onDocumentSelect(res.document.id);
+    } catch (err) {
+      toast({
+        title: "Upload Failed",
+        description: err instanceof Error ? err.message : "Failed to ingest file",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploadPending(false);
+    }
+
     e.target.value = "";
   };
 
@@ -92,7 +137,7 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
             <Database className="w-5 h-5 text-primary" />
             Knowledge Base
           </CardTitle>
-          <CardDescription>Paste or upload plain-text documents to build the semantic index.</CardDescription>
+          <CardDescription>Paste text or upload a .txt / .pdf file to build the semantic index.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleIngest} className="space-y-4">
@@ -107,6 +152,7 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
                     size="sm"
                     className="text-xs font-mono border-primary/30 hover:bg-primary/10"
                     onClick={() => { setTitle(doc.title); setText(doc.text); }}
+                    disabled={isPending}
                   >
                     Load Sample {i + 1}
                   </Button>
@@ -117,14 +163,15 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
                   size="sm"
                   className="text-xs font-mono border-primary/30 hover:bg-primary/10 gap-1.5"
                   onClick={() => fileInputRef.current?.click()}
+                  disabled={isPending}
                 >
-                  <Upload className="w-3 h-3" />
-                  Upload .txt
+                  {isUploadPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                  Upload .txt / .pdf
                 </Button>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".txt,text/plain"
+                  accept=".txt,.pdf,text/plain,application/pdf"
                   className="hidden"
                   onChange={handleFileUpload}
                 />
@@ -135,20 +182,20 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="font-mono text-sm bg-background border-border/50 focus-visible:ring-primary"
-                disabled={ingestDoc.isPending}
+                disabled={isPending}
               />
               <Textarea
                 placeholder="Paste document text here to be chunked and embedded with all-MiniLM-L6-v2..."
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 className="min-h-[120px] font-mono text-sm resize-none bg-background border-border/50 focus-visible:ring-primary"
-                disabled={ingestDoc.isPending}
+                disabled={isPending}
               />
             </div>
             <Button
               type="submit"
               className="w-full font-mono bg-primary text-primary-foreground hover:bg-primary/90"
-              disabled={ingestDoc.isPending || !title.trim() || !text.trim()}
+              disabled={isPending || !title.trim() || !text.trim()}
             >
               {ingestDoc.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
               {ingestDoc.isPending ? "Embedding chunks..." : "Ingest & Embed"}
@@ -200,7 +247,7 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
           </div>
         ) : (
           <div className="text-center p-6 border border-dashed border-border/50 rounded-md text-sm text-muted-foreground font-mono">
-            No documents yet. Paste text or upload a .txt file above.
+            No documents yet. Paste text or upload a .txt / .pdf file above.
           </div>
         )}
       </div>
