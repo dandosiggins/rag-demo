@@ -4,4 +4,4 @@ installCommand = "pnpm install --no-frozen-lockfile"
 buildCommand = "PORT=3000 BASE_PATH=/ pnpm --filter @workspace/rag-demo build && pnpm --filter @workspace/api-server build"
 
 [deploy]
-startCommand = "node --enable-source-maps ./artifacts/api-server/dist/index.mjs"
+startCommand = "pnpm --filter @workspace/db push && node --enable-source-maps ./artifacts/api-server/dist/index.mjs"
