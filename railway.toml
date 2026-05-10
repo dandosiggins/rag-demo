@@ -1,5 +1,6 @@
 [build]
-installCommand = "pnpm install --no-frozen-lockfile --prefer-offline"
+builder = "NIXPACKS"
+installCommand = "pnpm install --no-frozen-lockfile"
 buildCommand = "pnpm --filter @workspace/rag-demo build && pnpm --filter @workspace/api-server build"
 
 [deploy]
