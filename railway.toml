@@ -1,0 +1,6 @@
+[build]
+installCommand = "pnpm install --no-frozen-lockfile --prefer-offline"
+buildCommand = "pnpm --filter @workspace/rag-demo build && pnpm --filter @workspace/api-server build"
+
+[deploy]
+startCommand = "node --enable-source-maps ./artifacts/api-server/dist/index.mjs"
