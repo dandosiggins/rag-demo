@@ -18,6 +18,7 @@ import type {
 
 import type {
   Chunk,
+  ClearAllDocumentsResult,
   DeleteDocumentResult,
   Document,
   HealthStatus,
@@ -188,6 +189,87 @@ export function useListDocuments<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Delete all documents, chunks, and embeddings
+ */
+export const getClearAllDocumentsUrl = () => {
+  return `/api/rag/documents`;
+};
+
+export const clearAllDocuments = async (
+  options?: RequestInit,
+): Promise<ClearAllDocumentsResult> => {
+  return customFetch<ClearAllDocumentsResult>(getClearAllDocumentsUrl(), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getClearAllDocumentsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearAllDocuments>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof clearAllDocuments>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["clearAllDocuments"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof clearAllDocuments>>,
+    void
+  > = () => {
+    return clearAllDocuments(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClearAllDocumentsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof clearAllDocuments>>
+>;
+
+export type ClearAllDocumentsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete all documents, chunks, and embeddings
+ */
+export const useClearAllDocuments = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearAllDocuments>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof clearAllDocuments>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getClearAllDocumentsMutationOptions(options));
+};
 
 /**
  * @summary Ingest a document (chunk and vectorize)
@@ -449,7 +531,7 @@ export function useGetDocumentChunks<
 }
 
 /**
- * Embeds the question using text-embedding-3-small (OpenAI, 1536-dim) and returns the top-K most similar chunks by cosine similarity. Does NOT call the LLM; pass the result to /rag/generate for streaming answer generation.
+ * Embeds the question using all-MiniLM-L6-v2 (local, 384-dim) and returns the top-K most similar chunks by cosine similarity. Does NOT call the LLM; pass the result to /rag/generate for streaming answer generation.
  * @summary Retrieval only — embed query and return top-K matching chunks
  */
 export const getRagQueryUrl = () => {

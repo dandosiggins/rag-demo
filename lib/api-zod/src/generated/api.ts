@@ -27,6 +27,15 @@ export const ListDocumentsResponseItem = zod.object({
 export const ListDocumentsResponse = zod.array(ListDocumentsResponseItem);
 
 /**
+ * @summary Delete all documents, chunks, and embeddings
+ */
+export const ClearAllDocumentsResponse = zod.object({
+  success: zod.boolean(),
+  deletedDocuments: zod.number(),
+  deletedChunks: zod.number(),
+});
+
+/**
  * @summary Ingest a document (chunk and vectorize)
  */
 export const IngestDocumentBody = zod.object({
@@ -87,7 +96,7 @@ export const GetDocumentChunksResponse = zod.array(
 );
 
 /**
- * Embeds the question using text-embedding-3-small (OpenAI, 1536-dim) and returns the top-K most similar chunks by cosine similarity. Does NOT call the LLM; pass the result to /rag/generate for streaming answer generation.
+ * Embeds the question using all-MiniLM-L6-v2 (local, 384-dim) and returns the top-K most similar chunks by cosine similarity. Does NOT call the LLM; pass the result to /rag/generate for streaming answer generation.
  * @summary Retrieval only — embed query and return top-K matching chunks
  */
 export const RagQueryBody = zod.object({

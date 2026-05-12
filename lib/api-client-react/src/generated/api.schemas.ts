@@ -52,6 +52,12 @@ export interface DeleteDocumentResult {
   documentId: string;
 }
 
+export interface ClearAllDocumentsResult {
+  success: boolean;
+  deletedDocuments: number;
+  deletedChunks: number;
+}
+
 export interface RagQueryBody {
   question: string;
   /** Number of chunks to retrieve (default 3) */

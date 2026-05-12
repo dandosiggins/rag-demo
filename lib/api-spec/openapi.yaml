@@ -41,6 +41,17 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Document"
+    delete:
+      operationId: clearAllDocuments
+      tags: [rag]
+      summary: Delete all documents, chunks, and embeddings
+      responses:
+        "200":
+          description: All documents cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClearAllDocumentsResult"
     post:
       operationId: ingestDocument
       tags: [rag]
@@ -263,6 +274,20 @@ components:
       required:
         - success
         - documentId
+
+    ClearAllDocumentsResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        deletedDocuments:
+          type: integer
+        deletedChunks:
+          type: integer
+      required:
+        - success
+        - deletedDocuments
+        - deletedChunks
 
     RagQueryBody:
       type: object

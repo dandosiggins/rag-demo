@@ -7,6 +7,7 @@ import {
   listDocuments,
   getDocument,
   deleteDocument,
+  clearAllDocuments,
   getChunksForDocument,
   retrieveTopK,
   getStats,
@@ -159,6 +160,11 @@ ragRouter.post("/rag/upload", (req, res, next) => {
       wordCount,
     })),
   });
+});
+
+ragRouter.delete("/rag/documents", async (_req, res) => {
+  const result = await clearAllDocuments();
+  res.json({ success: true, ...result });
 });
 
 ragRouter.delete("/rag/documents/:documentId", async (req, res) => {

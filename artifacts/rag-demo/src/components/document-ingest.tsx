@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { useIngestDocument, getListDocumentsQueryKey, useListDocuments, useDeleteDocument, getGetRagStatsQueryKey } from "@workspace/api-client-react";
+import { useIngestDocument, getListDocumentsQueryKey, useListDocuments, useDeleteDocument, useClearAllDocuments, getGetRagStatsQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,17 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Trash2, Database, AlignLeft, RefreshCw, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 const SAMPLE_DOCS = [
   {
@@ -31,6 +42,7 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
   const { data: documents, isLoading: isLoadingDocs } = useListDocuments();
   const ingestDoc = useIngestDocument();
   const deleteDoc = useDeleteDocument();
+  const clearAll = useClearAllDocuments();
 
   const isPending = ingestDoc.isPending || isUploadPending;
 
@@ -129,6 +141,22 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
     );
   };
 
+  const handleClearAll = () => {
+    clearAll.mutate(undefined, {
+      onSuccess: (res) => {
+        toast({
+          title: "Knowledge Base Cleared",
+          description: `Deleted ${res.deletedDocuments} document${res.deletedDocuments !== 1 ? "s" : ""} and ${res.deletedChunks} chunk${res.deletedChunks !== 1 ? "s" : ""}.`,
+        });
+        queryClient.invalidateQueries({ queryKey: getListDocumentsQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetRagStatsQueryKey() });
+      },
+      onError: () => {
+        toast({ title: "Clear Failed", variant: "destructive" });
+      },
+    });
+  };
+
   return (
     <div className="space-y-6">
       <Card className="border-primary/20 bg-background shadow-lg">
@@ -205,10 +233,44 @@ export function DocumentIngest({ onDocumentSelect }: { onDocumentSelect: (id: st
       </Card>
 
       <div className="space-y-3">
-        <h3 className="text-sm font-mono text-muted-foreground uppercase tracking-wider flex items-center gap-2">
-          <AlignLeft className="w-4 h-4" />
-          Ingested Documents
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-mono text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+            <AlignLeft className="w-4 h-4" />
+            Ingested Documents
+          </h3>
+          {documents && documents.length > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs font-mono text-muted-foreground hover:text-destructive gap-1.5 h-7 px-2"
+                  disabled={clearAll.isPending}
+                >
+                  {clearAll.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                  Clear All
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Clear all documents?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will permanently delete all {documents.length} document{documents.length !== 1 ? "s" : ""}, their chunks, and embeddings from the database. This cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={handleClearAll}
+                  >
+                    Clear All
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
         {isLoadingDocs ? (
           <div className="flex justify-center p-4">
             <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />

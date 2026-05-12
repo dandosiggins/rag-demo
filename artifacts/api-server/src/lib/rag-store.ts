@@ -228,6 +228,19 @@ export async function deleteDocument(id: string): Promise<boolean> {
   return true;
 }
 
+export async function clearAllDocuments(): Promise<{ deletedDocuments: number; deletedChunks: number }> {
+  const [docResult, chunkResult] = await Promise.all([
+    db.select({ count: sql<number>`count(*)::int` }).from(ragDocuments),
+    db.select({ count: sql<number>`count(*)::int` }).from(ragChunks),
+  ]);
+  await db.delete(ragChunks);
+  await db.delete(ragDocuments);
+  return {
+    deletedDocuments: docResult[0]?.count ?? 0,
+    deletedChunks: chunkResult[0]?.count ?? 0,
+  };
+}
+
 export async function getChunksForDocument(docId: string): Promise<StoredChunk[]> {
   const rows = await db
     .select()
